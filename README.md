@@ -4,6 +4,8 @@ WhaleMaid-for-Codex 是面向 Windows Codex 桌面应用的 Live2D 桌宠。角�
 
 本项目公开源码并允许非商业学习、修改和二次开发，但不允许未经授权的商业使用。它不是采用 OSI 认可许可证的开源软件。女仆鲸鱼人设来自 bilibili: [@ZipZipPipe](https://space.bilibili.com/4168597)。
 
+~~至于为什么要让大肥鱼夺舍Codex，本来想做dsh的，但是涨价后完全用不起了！~~
+
 ## 功能
 
 - 原生 Live2D 模型渲染与物理效果；
