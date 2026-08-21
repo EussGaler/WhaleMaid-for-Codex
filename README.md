@@ -14,6 +14,12 @@ WhaleMaid-for-Codex 是面向 Windows Codex 桌面应用的 Live2D 桌宠。角�
 - 支持拖动、窗口缩放、锁定桌宠和清除提示；
 - 支持可关闭的开机启动、单实例运行和安全卸载；
 - 本地读取 Codex 状态，不上传提示词、回复或文件内容。
+- 
+### 效果预览
+
+<img width="253" height="448" alt="演示图片" src="https://github.com/user-attachments/assets/2043f4d6-60ef-4d8d-905f-223ec9e6f181" />
+
+https://github.com/user-attachments/assets/e47c77d5-10ef-469a-a449-9d0ef0f2bcd4
 
 ## 系统要求
 
