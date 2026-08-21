@@ -1,0 +1,9 @@
+/build/
+/dist/
+/.vs/
+/.vscode/
+*.user
+*.zip
+*.log
+hooks.json.whalemaid-backup-*
+
