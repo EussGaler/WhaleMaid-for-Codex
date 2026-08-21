@@ -15,8 +15,8 @@ WhaleMaid-for-Codex 是面向 Windows Codex 桌面应用的 Live2D 桌宠。角�
 - 状态卡位于角色头顶，不会缩放或闪烁人物；
 - 支持拖动、窗口缩放、锁定桌宠和清除提示；
 - 支持可关闭的开机启动、单实例运行和安全卸载；
-- 本地读取 Codex 状态，不上传提示词、回复或文件内容。
-- 
+- 本地读取 Codex 状态，但不会上传提示词、回复或文件内容。
+
 ### 效果预览
 
 <img width="253" height="448" alt="演示图片" src="https://github.com/user-attachments/assets/2043f4d6-60ef-4d8d-905f-223ec9e6f181" />
@@ -34,7 +34,7 @@ Windows Release 已包含 Qt、Microsoft Visual C++ Runtime、Live2D 运行资�
 
 ## 安装
 
-1. 从 GitHub Releases 下载 `WhaleMaid-Windows-x64-vX.Y.Z.zip`。
+1. 从 GitHub Releases 下载 `WhaleMaid-for-Codex-Windows-x64-vX.Y.Z.zip`。
 2. 将 ZIP 完整解压到普通文件夹。不要在压缩包预览窗口中直接运行。
 3. 双击 **`安装WhaleMaid.cmd`**。
 4. 等待窗口显示 `SUCCESS - WhaleMaid installation completed.`。
