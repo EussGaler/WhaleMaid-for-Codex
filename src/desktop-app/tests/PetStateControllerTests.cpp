@@ -1,5 +1,6 @@
 #include "PetStateController.hpp"
 #include "CodexActivityWatcher.hpp"
+#include "PetPreferences.hpp"
 #include "StartupSettings.hpp"
 #include "WindowPlacement.hpp"
 
@@ -27,6 +28,7 @@ private Q_SLOTS:
     void failureNoticeIsPublished();
     void approvalLogsWithoutIdsAreNotDropped();
     void startupSettingCanBeToggled();
+    void petPreferencesRoundTrip();
 };
 
 void PetStateControllerTests::stateChangeIsPublishedOnce()
@@ -192,6 +194,41 @@ void PetStateControllerTests::startupSettingCanBeToggled()
     QSettings disabledRunSettings(runPath, QSettings::IniFormat);
     QVERIFY(!disabledRunSettings.contains(QStringLiteral("WhaleMaid")));
 #endif
+}
+
+void PetStateControllerTests::petPreferencesRoundTrip()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QByteArray oldSettings = qgetenv("WHALEMAID_TEST_SETTINGS_REGISTRY");
+    const QString settingsPath = QDir(temporary.path()).filePath(
+        QStringLiteral("pet-preferences.ini"));
+    qputenv("WHALEMAID_TEST_SETTINGS_REGISTRY", settingsPath.toUtf8());
+
+    const auto cleanup = qScopeGuard([=]() {
+        QSettings(settingsPath, QSettings::IniFormat).clear();
+        if (oldSettings.isNull()) qunsetenv("WHALEMAID_TEST_SETTINGS_REGISTRY");
+        else qputenv("WHALEMAID_TEST_SETTINGS_REGISTRY", oldSettings);
+    });
+
+    PetPreferencesData saved;
+    saved.scalePercent = 125;
+    saved.locked = true;
+    saved.hasPosition = true;
+    saved.topLeft = QPoint(1380, 420);
+    saved.screenName = QStringLiteral("secondary-display");
+    saved.hasScreenOffset = true;
+    saved.screenOffset = QPoint(100, 120);
+
+    QVERIFY(PetPreferences::save(saved));
+    const PetPreferencesData loaded = PetPreferences::load();
+    QCOMPARE(loaded.scalePercent, saved.scalePercent);
+    QCOMPARE(loaded.locked, saved.locked);
+    QCOMPARE(loaded.hasPosition, saved.hasPosition);
+    QCOMPARE(loaded.topLeft, saved.topLeft);
+    QCOMPARE(loaded.screenName, saved.screenName);
+    QCOMPARE(loaded.hasScreenOffset, saved.hasScreenOffset);
+    QCOMPARE(loaded.screenOffset, saved.screenOffset);
 }
 
 QTEST_GUILESS_MAIN(PetStateControllerTests)

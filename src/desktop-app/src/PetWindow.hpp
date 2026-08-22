@@ -40,6 +40,8 @@ private:
     void buildUi();
     void connectInteractions();
     void loadAssets();
+    void restorePreferences();
+    void savePreferences() const;
     void showContextMenu(const QPoint& globalPosition);
     void updateScaledUiMetrics();
     void positionNoticeHost();

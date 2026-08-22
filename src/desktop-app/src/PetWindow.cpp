@@ -3,6 +3,7 @@
 #include "CharacterWidget.hpp"
 #include "CodexActivityWatcher.hpp"
 #include "CodexStatusBridge.hpp"
+#include "PetPreferences.hpp"
 #include "StartupSettings.hpp"
 #include "WindowPlacement.hpp"
 
@@ -77,12 +78,7 @@ PetWindow::PetWindow(QWidget* parent)
     loadAssets();
     connectInteractions();
     character_->setCharacterPixmap(pixmaps_.value(QStringLiteral("idle")));
-
-    if (const QScreen* screen = QGuiApplication::primaryScreen())
-    {
-        const QRect area = screen->availableGeometry();
-        move(area.right() - width() - 20, area.bottom() - height() - 20);
-    }
+    restorePreferences();
 }
 
 PetWindow::~PetWindow()
@@ -378,6 +374,7 @@ void PetWindow::showContextMenu(const QPoint& globalPosition)
         petLocked_ = lockPetAction->isChecked();
         windowDragActive_ = false;
         character_->setDragLocked(petLocked_);
+        savePreferences();
     }
     else if (selected == clearNoticesAction)
     {
@@ -406,6 +403,7 @@ void PetWindow::setWindowScale(const int percent)
         bottomRightAnchor.x() - width() + 1,
         bottomRightAnchor.y() - height() + 1);
     move(clampedTopLeft(requested));
+    savePreferences();
 }
 
 void PetWindow::showAboutDialog()
@@ -497,6 +495,7 @@ void PetWindow::endWindowDrag()
     }
 
     windowDragActive_ = false;
+    savePreferences();
 }
 
 // Public entry point used by both the local Codex bridge and UI smoke tests.
@@ -608,6 +607,7 @@ void PetWindow::applyLatestSessionState()
 
 void PetWindow::closeEvent(QCloseEvent* event)
 {
+    savePreferences();
     noticeHost_->hide();
     const QString localAppData = qEnvironmentVariable("LOCALAPPDATA");
     if (!localAppData.isEmpty())
@@ -622,6 +622,84 @@ void PetWindow::closeEvent(QCloseEvent* event)
     }
     event->accept();
     QApplication::quit();
+}
+
+void PetWindow::restorePreferences()
+{
+    const PetPreferencesData preferences = PetPreferences::load();
+    windowScalePercent_ = preferences.scalePercent;
+    setFixedSize(scaledWindowSize(windowScalePercent_));
+    updateScaledUiMetrics();
+
+    petLocked_ = preferences.locked;
+    windowDragActive_ = false;
+    character_->setDragLocked(petLocked_);
+
+    QPoint requested;
+    bool restoredPosition = false;
+    if (preferences.hasPosition)
+    {
+        const auto screens = QGuiApplication::screens();
+        if (!preferences.screenName.isEmpty() && preferences.hasScreenOffset)
+        {
+            for (const QScreen* screen : screens)
+            {
+                if (screen->name() == preferences.screenName)
+                {
+                    requested = screen->availableGeometry().topLeft()
+                        + preferences.screenOffset;
+                    restoredPosition = true;
+                    break;
+                }
+            }
+        }
+
+        if (!restoredPosition)
+        {
+            const QRect savedWindow(preferences.topLeft, size());
+            for (const QScreen* screen : screens)
+            {
+                if (savedWindow.intersects(screen->availableGeometry()))
+                {
+                    requested = preferences.topLeft;
+                    restoredPosition = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!restoredPosition)
+    {
+        if (const QScreen* screen = QGuiApplication::primaryScreen())
+        {
+            const QRect area = screen->availableGeometry();
+            requested = QPoint(
+                area.right() - width() - 20,
+                area.bottom() - height() - 20);
+        }
+    }
+
+    move(clampedTopLeft(requested));
+}
+
+void PetWindow::savePreferences() const
+{
+    PetPreferencesData preferences;
+    preferences.scalePercent = windowScalePercent_;
+    preferences.locked = petLocked_;
+    preferences.hasPosition = true;
+    preferences.topLeft = frameGeometry().topLeft();
+
+    if (const QScreen* screen = QGuiApplication::screenAt(frameGeometry().center()))
+    {
+        preferences.screenName = screen->name();
+        preferences.hasScreenOffset = true;
+        preferences.screenOffset = preferences.topLeft
+            - screen->availableGeometry().topLeft();
+    }
+
+    PetPreferences::save(preferences);
 }
 
 void PetWindow::moveEvent(QMoveEvent* event)
