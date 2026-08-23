@@ -7,7 +7,7 @@
 namespace
 {
 constexpr int DefaultScalePercent = 75;
-constexpr int MinimumScalePercent = 50;
+constexpr int MinimumScalePercent = 15;
 constexpr int MaximumScalePercent = 200;
 
 std::unique_ptr<QSettings> openSettings()
@@ -37,6 +37,13 @@ int validatedScale(const int value)
         ? value
         : DefaultScalePercent;
 }
+
+QString validatedNoticePlacement(const QString& value)
+{
+    return value == QStringLiteral("left")
+        ? QStringLiteral("left")
+        : QStringLiteral("above");
+}
 }
 
 PetPreferencesData PetPreferences::load()
@@ -48,6 +55,8 @@ PetPreferencesData PetPreferences::load()
     result.scalePercent = validatedScale(
         settings->value(QStringLiteral("ScalePercent"), DefaultScalePercent).toInt());
     result.locked = settings->value(QStringLiteral("Locked"), false).toBool();
+    result.noticePlacement = validatedNoticePlacement(settings->value(
+        QStringLiteral("NoticePlacement"), QStringLiteral("above")).toString());
     result.hasPosition = settings->value(QStringLiteral("HasPosition"), false).toBool();
     result.topLeft = settings->value(QStringLiteral("TopLeft")).toPoint();
     result.screenName = settings->value(QStringLiteral("ScreenName")).toString();
@@ -63,10 +72,13 @@ bool PetPreferences::save(const PetPreferencesData& preferences)
 {
     auto settings = openSettings();
     settings->beginGroup(QStringLiteral("Window"));
-    settings->setValue(QStringLiteral("SchemaVersion"), 1);
+    settings->setValue(QStringLiteral("SchemaVersion"), 2);
     settings->setValue(
         QStringLiteral("ScalePercent"), validatedScale(preferences.scalePercent));
     settings->setValue(QStringLiteral("Locked"), preferences.locked);
+    settings->setValue(
+        QStringLiteral("NoticePlacement"),
+        validatedNoticePlacement(preferences.noticePlacement));
     settings->setValue(QStringLiteral("HasPosition"), preferences.hasPosition);
 
     if (preferences.hasPosition)

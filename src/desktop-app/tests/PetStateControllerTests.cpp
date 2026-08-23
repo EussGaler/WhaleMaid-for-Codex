@@ -212,8 +212,9 @@ void PetStateControllerTests::petPreferencesRoundTrip()
     });
 
     PetPreferencesData saved;
-    saved.scalePercent = 125;
+    saved.scalePercent = 15;
     saved.locked = true;
+    saved.noticePlacement = QStringLiteral("left");
     saved.hasPosition = true;
     saved.topLeft = QPoint(1380, 420);
     saved.screenName = QStringLiteral("secondary-display");
@@ -224,6 +225,7 @@ void PetStateControllerTests::petPreferencesRoundTrip()
     const PetPreferencesData loaded = PetPreferences::load();
     QCOMPARE(loaded.scalePercent, saved.scalePercent);
     QCOMPARE(loaded.locked, saved.locked);
+    QCOMPARE(loaded.noticePlacement, saved.noticePlacement);
     QCOMPARE(loaded.hasPosition, saved.hasPosition);
     QCOMPARE(loaded.topLeft, saved.topLeft);
     QCOMPARE(loaded.screenName, saved.screenName);

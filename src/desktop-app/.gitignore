@@ -1,5 +1,7 @@
 /build/
-/assets/
+/assets/*
+!/assets/fonts/
+!/assets/fonts/站酷快乐体2016修订版.ttf
 /Resources/
 *.user
 *.pdb

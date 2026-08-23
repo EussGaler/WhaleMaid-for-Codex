@@ -30,6 +30,7 @@ public:
         const QString& turnId = {});
     void setWindowScale(int percent);
     void showAboutForTesting();
+    bool saveCompositeForTesting(const QString& path);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -43,14 +44,14 @@ private:
     void restorePreferences();
     void savePreferences() const;
     void showContextMenu(const QPoint& globalPosition);
+    void applyWindowScale(int percent, bool persist);
     void updateScaledUiMetrics();
     void positionNoticeHost();
     void showAboutDialog();
     void beginWindowDrag(const QPoint& globalPosition);
     void continueWindowDrag(const QPoint& globalPosition);
     void endWindowDrag();
-    void addNotice(const QString& kind, const QString& title,
-                   const QString& message, bool persistent);
+    void addNotice(const QString& kind, const QString& title, bool persistent);
     void fadeTransientNotices(int delayMilliseconds);
     void fadeAndRemoveNotice(QFrame* card, int delayMilliseconds);
     void removeNotice(QFrame* card);
@@ -74,9 +75,11 @@ private:
     QPoint dragOffset_;
     bool windowDragActive_ = false;
     bool petLocked_ = false;
+    QString noticePlacement_ = QStringLiteral("above");
     int windowScalePercent_ = 75;
     QHash<QString, QPixmap> pixmaps_;
     QHash<QString, SessionState> sessionStates_;
     QString latestSessionId_;
     qint64 sessionSequence_ = 0;
+    QString noticeFontFamily_;
 };

@@ -7,6 +7,7 @@ struct PetPreferencesData
 {
     int scalePercent = 75;
     bool locked = false;
+    QString noticePlacement = QStringLiteral("above");
     bool hasPosition = false;
     QPoint topLeft;
     QString screenName;

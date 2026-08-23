@@ -56,7 +56,9 @@ int main(int argc, char* argv[])
     }
 
     // A normal second launch asks the existing instance to restore itself and exits.
-    if (CodexStatusBridge::sendEvent(
+    // Composite UI checks stay isolated from the user's running desktop pet.
+    const bool isolatedUiSmoke = arguments.contains(QStringLiteral("--composite-smoke"));
+    if (!isolatedUiSmoke && CodexStatusBridge::sendEvent(
             QStringLiteral("activate"), {}, {}, {}, QStringLiteral("activate")))
     {
         return 0;
@@ -68,7 +70,7 @@ int main(int argc, char* argv[])
     {
         bool validScale = false;
         const int requestedScale = arguments.at(windowScaleIndex + 1).toInt(&validScale);
-        if (validScale && requestedScale >= 50 && requestedScale <= 200)
+        if (validScale && requestedScale >= 15 && requestedScale <= 200)
         {
             window.setWindowScale(requestedScale);
         }
@@ -164,6 +166,17 @@ int main(int argc, char* argv[])
             {
                 app.exit(2);
             }
+        });
+    }
+
+    const qsizetype compositeSmokeIndex = arguments.indexOf(
+        QStringLiteral("--composite-smoke"));
+    if (compositeSmokeIndex >= 0 && compositeSmokeIndex + 1 < arguments.size())
+    {
+        const QString screenshotPath = QDir::cleanPath(
+            arguments.at(compositeSmokeIndex + 1));
+        QTimer::singleShot(1000, &app, [&app, &window, screenshotPath]() {
+            app.exit(window.saveCompositeForTesting(screenshotPath) ? 0 : 2);
         });
     }
 

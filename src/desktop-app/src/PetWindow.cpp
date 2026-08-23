@@ -7,7 +7,6 @@
 #include "StartupSettings.hpp"
 #include "WindowPlacement.hpp"
 
-#include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QCheckBox>
@@ -16,24 +15,29 @@
 #include <QDir>
 #include <QFrame>
 #include <QFile>
+#include <QFontDatabase>
 #include <QGraphicsOpacityEffect>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QImage>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMoveEvent>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPropertyAnimation>
 #include <QPushButton>
 #include <QScreen>
 #include <QSignalBlocker>
+#include <QSlider>
 #include <QVBoxLayout>
 #include <QToolButton>
 #include <QTimer>
+#include <QWidgetAction>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 
 namespace
@@ -42,8 +46,18 @@ constexpr int BaseWindowWidth = 520;
 constexpr int BaseWindowHeight = 720;
 constexpr int DefaultWindowScalePercent = 75;
 constexpr int MinimumVisiblePixels = 96;
-constexpr int BaseNoticeWidth = 330;
+constexpr int BaseNoticeBubbleWidth = 200;
+constexpr int BaseNoticeCloseGutter = 24;
+constexpr int BaseNoticeWidth = BaseNoticeBubbleWidth + BaseNoticeCloseGutter;
+constexpr int BaseNoticeHeight = 98;
+constexpr int MinimumNoticeScalePercent = 30;
 constexpr int BaseOuterMargin = 12;
+// The Live2D canvas contains transparent padding around the visible model.
+// These offsets let the thought-bubble tail use that padding so the cards sit
+// close to the character without covering the artwork.
+constexpr int BaseNoticePetOverlap = 60;
+constexpr int BaseNoticeSideOverlap = 130;
+constexpr int BaseNoticeSideTopOffset = 55;
 
 int scaledPixels(const int basePixels, const int percent, const int minimum = 1)
 {
@@ -60,6 +74,177 @@ QSize scaledWindowSize(const int percent)
         static_cast<int>(std::lround(BaseWindowWidth * scale)),
         static_cast<int>(std::lround(BaseWindowHeight * scale))};
 }
+
+QColor noticeFill(const QString& kind)
+{
+    if (kind == QStringLiteral("completed"))
+    {
+        return QColor(QStringLiteral("#F0FAF2"));
+    }
+    if (kind == QStringLiteral("failed"))
+    {
+        return QColor(QStringLiteral("#FFF1F2"));
+    }
+    if (kind == QStringLiteral("approval"))
+    {
+        return QColor(QStringLiteral("#FFF6E8"));
+    }
+    return QColor(Qt::white);
+}
+
+class ThoughtBubbleCard final : public QFrame
+{
+public:
+    ThoughtBubbleCard(
+        const QString& kind,
+        const QString& title,
+        const QString& fontFamily,
+        const bool persistent,
+        QWidget* parent)
+        : QFrame(parent)
+        , kind_(kind)
+        , fontFamily_(fontFamily)
+    {
+        setObjectName(QStringLiteral("noticeCard"));
+        setProperty("kind", kind);
+        setProperty("persistent", persistent);
+        setProperty("fading", false);
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAutoFillBackground(false);
+
+        row_ = new QHBoxLayout(this);
+        title_ = new QLabel(title, this);
+        title_->setObjectName(QStringLiteral("noticeTitle"));
+        title_->setAlignment(Qt::AlignCenter);
+        row_->addWidget(title_, 1, Qt::AlignCenter);
+
+        if (persistent)
+        {
+            close_ = new QToolButton(this);
+            close_->setObjectName(QStringLiteral("noticeClose"));
+            close_->setText(QStringLiteral("×"));
+            close_->setToolTip(QStringLiteral("关闭提示"));
+            close_->setCursor(Qt::PointingHandCursor);
+        }
+    }
+
+    void setVisualScale(const int petScalePercent)
+    {
+        const int scale = std::max(MinimumNoticeScalePercent, petScalePercent);
+        setFixedSize(
+            scaledPixels(BaseNoticeWidth, scale),
+            scaledPixels(BaseNoticeHeight, scale));
+
+        row_->setContentsMargins(
+            scaledPixels(18, scale, 6),
+            scaledPixels(10, scale, 3),
+            scaledPixels(18 + BaseNoticeCloseGutter, scale, 13),
+            scaledPixels(28, scale, 8));
+        row_->setSpacing(0);
+
+        QFont titleFont = fontFamily_.isEmpty()
+            ? QApplication::font()
+            : QFont(fontFamily_);
+        titleFont.setPixelSize(scaledPixels(29, scale, 10));
+        title_->setFont(titleFont);
+        title_->setStyleSheet(QStringLiteral("color: #11131a; background: transparent;"));
+
+        if (close_)
+        {
+            QFont closeFont = QApplication::font();
+            closeFont.setPixelSize(scaledPixels(18, scale));
+            closeFont.setBold(true);
+            close_->setFont(closeFont);
+            const int closeSize = scaledPixels(22, scale);
+            close_->setFixedSize(closeSize, closeSize);
+            close_->setStyleSheet(QStringLiteral(
+                "QToolButton { color: #11131a; background: transparent; border: none; padding: 0; }"
+                "QToolButton:hover { background: rgba(17, 19, 26, 20); border-radius: 8px; }"));
+            const int bubbleWidth = scaledPixels(BaseNoticeBubbleWidth, scale);
+            const int cloudRight = static_cast<int>(std::ceil(bubbleWidth * 0.96));
+            const int closeCenter = cloudRight + scaledPixels(5, scale);
+            close_->move(
+                closeCenter - closeSize / 2,
+                scaledPixels(13, scale));
+            close_->raise();
+        }
+        update();
+    }
+
+    [[nodiscard]] QToolButton* closeButton() const
+    {
+        return close_;
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        const qreal widthValue = static_cast<qreal>(width());
+        const qreal heightValue = static_cast<qreal>(height());
+        const qreal bubbleWidth = widthValue
+            * static_cast<qreal>(BaseNoticeBubbleWidth)
+            / static_cast<qreal>(BaseNoticeWidth);
+        const qreal stroke = std::max<qreal>(1.25, bubbleWidth / 150.0);
+
+        QPainterPath cloud;
+        cloud.moveTo(bubbleWidth * 0.50, heightValue * 0.10);
+        cloud.cubicTo(bubbleWidth * 0.57, heightValue * 0.06,
+                      bubbleWidth * 0.64, heightValue * 0.08,
+                      bubbleWidth * 0.68, heightValue * 0.18);
+        cloud.cubicTo(bubbleWidth * 0.76, heightValue * 0.12,
+                      bubbleWidth * 0.86, heightValue * 0.18,
+                      bubbleWidth * 0.84, heightValue * 0.30);
+        cloud.cubicTo(bubbleWidth * 0.95, heightValue * 0.32,
+                      bubbleWidth * 0.96, heightValue * 0.44,
+                      bubbleWidth * 0.91, heightValue * 0.50);
+        cloud.cubicTo(bubbleWidth * 0.94, heightValue * 0.60,
+                      bubbleWidth * 0.81, heightValue * 0.72,
+                      bubbleWidth * 0.72, heightValue * 0.65);
+        cloud.cubicTo(bubbleWidth * 0.65, heightValue * 0.78,
+                      bubbleWidth * 0.56, heightValue * 0.76,
+                      bubbleWidth * 0.50, heightValue * 0.68);
+        cloud.cubicTo(bubbleWidth * 0.44, heightValue * 0.76,
+                      bubbleWidth * 0.35, heightValue * 0.78,
+                      bubbleWidth * 0.28, heightValue * 0.65);
+        cloud.cubicTo(bubbleWidth * 0.19, heightValue * 0.72,
+                      bubbleWidth * 0.06, heightValue * 0.60,
+                      bubbleWidth * 0.09, heightValue * 0.50);
+        cloud.cubicTo(bubbleWidth * 0.04, heightValue * 0.44,
+                      bubbleWidth * 0.05, heightValue * 0.32,
+                      bubbleWidth * 0.16, heightValue * 0.30);
+        cloud.cubicTo(bubbleWidth * 0.14, heightValue * 0.18,
+                      bubbleWidth * 0.24, heightValue * 0.12,
+                      bubbleWidth * 0.32, heightValue * 0.18);
+        cloud.cubicTo(bubbleWidth * 0.36, heightValue * 0.08,
+                      bubbleWidth * 0.43, heightValue * 0.06,
+                      bubbleWidth * 0.50, heightValue * 0.10);
+        cloud.closeSubpath();
+
+        QPen outline(QColor(QStringLiteral("#11131A")), stroke);
+        outline.setCapStyle(Qt::RoundCap);
+        outline.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(outline);
+        painter.setBrush(noticeFill(kind_));
+        painter.drawPath(cloud);
+
+        painter.drawEllipse(
+            QRectF(bubbleWidth * 0.25, heightValue * 0.79,
+                   heightValue * 0.12, heightValue * 0.12));
+        painter.drawEllipse(
+            QRectF(bubbleWidth * 0.34, heightValue * 0.93,
+                   heightValue * 0.065, heightValue * 0.065));
+    }
+
+private:
+    QString kind_;
+    QString fontFamily_;
+    QHBoxLayout* row_ = nullptr;
+    QLabel* title_ = nullptr;
+    QToolButton* close_ = nullptr;
+};
 }
 
 PetWindow::PetWindow(QWidget* parent)
@@ -137,75 +322,21 @@ void PetWindow::updateScaledUiMetrics()
             - margin
             - scaledPixels(8, windowScalePercent_)));
 
-    noticeLayout_->setSpacing(scaledPixels(7, windowScalePercent_));
-    const int noticeWidth = std::min(
-        scaledPixels(BaseNoticeWidth, windowScalePercent_),
-        std::max(1, scaledWindowSize(windowScalePercent_).width() - margin * 2));
+    const int noticeScale = std::max(
+        MinimumNoticeScalePercent, windowScalePercent_);
+    noticeLayout_->setSpacing(scaledPixels(7, noticeScale, 2));
+    const int noticeWidth = scaledPixels(BaseNoticeWidth, noticeScale);
     noticeHost_->setFixedWidth(noticeWidth);
 
     const auto cards = noticeHost_->findChildren<QFrame*>(
         QString(), Qt::FindDirectChildrenOnly);
     for (QFrame* card : cards)
     {
-        card->setFixedWidth(noticeWidth);
-        if (auto* row = qobject_cast<QHBoxLayout*>(card->layout()))
+        if (auto* bubble = dynamic_cast<ThoughtBubbleCard*>(card))
         {
-            row->setContentsMargins(
-                scaledPixels(14, windowScalePercent_),
-                scaledPixels(10, windowScalePercent_),
-                scaledPixels(9, windowScalePercent_),
-                scaledPixels(10, windowScalePercent_));
-            row->setSpacing(scaledPixels(7, windowScalePercent_));
+            bubble->setVisualScale(windowScalePercent_);
         }
     }
-
-    const QString noticeStyle = QStringLiteral(R"(
-        QFrame#noticeCard {
-            background: rgba(15, 32, 66, 220);
-            border: 1px solid rgba(125, 190, 255, 180);
-            border-radius: %1px;
-        }
-        QFrame#noticeCard[kind="approval"] {
-            background: rgba(92, 64, 18, 235);
-            border-color: rgba(255, 205, 92, 210);
-        }
-        QFrame#noticeCard[kind="completed"] {
-            background: rgba(32, 86, 96, 235);
-            border-color: rgba(128, 242, 218, 205);
-        }
-        QFrame#noticeCard[kind="failed"] {
-            background: rgba(102, 36, 45, 238);
-            border-color: rgba(255, 128, 145, 210);
-        }
-        QLabel#noticeTitle {
-            color: #f4f8ff;
-            font-size: %2px;
-            font-weight: 700;
-        }
-        QLabel#noticeDetail {
-            color: #bcd9ff;
-            font-size: %3px;
-        }
-        QToolButton#noticeClose {
-            color: #f4f8ff;
-            background: transparent;
-            border: none;
-            font-size: %4px;
-            font-weight: 700;
-            padding: 0px %5px;
-        }
-        QToolButton#noticeClose:hover {
-            background: rgba(255, 255, 255, 35);
-            border-radius: 8px;
-        }
-    )")
-        .arg(scaledPixels(13, windowScalePercent_))
-        .arg(scaledPixels(15, windowScalePercent_, 7))
-        .arg(scaledPixels(13, windowScalePercent_, 7))
-        .arg(scaledPixels(17, windowScalePercent_, 8))
-        .arg(scaledPixels(3, windowScalePercent_));
-    setStyleSheet(noticeStyle);
-    noticeHost_->setStyleSheet(noticeStyle);
 
     positionNoticeHost();
 }
@@ -228,15 +359,43 @@ void PetWindow::positionNoticeHost()
     }
 
     const QRect petGeometry = frameGeometry();
+    const bool placeOnLeft = noticePlacement_ == QStringLiteral("left");
     QPoint requested(
-        petGeometry.right() - noticeHost_->width() + 1,
-        petGeometry.top() - scaledPixels(8, windowScalePercent_) - desiredHeight);
+        petGeometry.left(),
+        placeOnLeft
+            ? petGeometry.top()
+                + scaledPixels(BaseNoticeSideTopOffset, windowScalePercent_)
+            : petGeometry.top()
+                + scaledPixels(BaseNoticePetOverlap, windowScalePercent_)
+                - desiredHeight);
     if (const QScreen* screen = QGuiApplication::screenAt(petGeometry.center()))
     {
         const QRect area = screen->availableGeometry();
+        if (placeOnLeft)
+        {
+            const int sideOverlap = scaledPixels(
+                BaseNoticeSideOverlap, windowScalePercent_);
+            const int leftSide = petGeometry.left()
+                - noticeHost_->width()
+                + sideOverlap;
+            const int rightSide = petGeometry.right()
+                + 1
+                - sideOverlap;
+            if (leftSide >= area.left())
+            {
+                requested.setX(leftSide);
+            }
+            else if (rightSide + noticeHost_->width() - 1 <= area.right())
+            {
+                requested.setX(rightSide);
+            }
+        }
         requested.setX(std::clamp(
             requested.x(), area.left(), area.right() - noticeHost_->width() + 1));
-        requested.setY(std::max(area.top(), requested.y()));
+        requested.setY(std::clamp(
+            requested.y(),
+            area.top(),
+            std::max(area.top(), area.bottom() - desiredHeight + 1)));
     }
     noticeHost_->move(requested);
     noticeHost_->raise();
@@ -254,40 +413,35 @@ void PetWindow::connectInteractions()
                 case PetStateController::PrimaryState::Thinking:
                     addNotice(
                         QStringLiteral("thinking"),
-                        QStringLiteral("Codex 思考中"),
-                        QStringLiteral("正在理解任务并规划下一步"),
+                        QStringLiteral("思考中"),
                         false);
                     break;
                 case PetStateController::PrimaryState::Working:
                     addNotice(
                         QStringLiteral("working"),
-                        QStringLiteral("Codex 工作中"),
-                        QStringLiteral("正在调用工具并处理任务"),
+                        QStringLiteral("工作中"),
                         false);
                     break;
                 case PetStateController::PrimaryState::AwaitingApproval:
                     addNotice(
                         QStringLiteral("approval"),
-                        QStringLiteral("等待你的确认"),
-                        QStringLiteral("请返回 Codex 查看并确认操作"),
+                        QStringLiteral("请求批准"),
                         true);
                     break;
                 }
             });
     connect(&state_, &PetStateController::completionPosted,
-            this, [this](const QString& message) {
+            this, [this](const QString&) {
                 addNotice(
                     QStringLiteral("completed"),
-                    QStringLiteral("Codex 已完成"),
-                    message.isEmpty() ? QStringLiteral("本轮任务已经处理完成") : message,
+                    QStringLiteral("任务完成"),
                     true);
             });
     connect(&state_, &PetStateController::failurePosted,
-            this, [this](const QString& message) {
+            this, [this](const QString&) {
                 addNotice(
                     QStringLiteral("failed"),
-                    QStringLiteral("Codex 遇到问题"),
-                    message.isEmpty() ? QStringLiteral("任务未能完成，请返回 Codex 查看详情") : message,
+                    QStringLiteral("任务失败"),
                     true);
             });
 
@@ -300,19 +454,22 @@ void PetWindow::connectInteractions()
     connect(character_, &CharacterWidget::contextMenuRequested,
             this, &PetWindow::showContextMenu);
 
-    auto* bridge = new CodexStatusBridge(this);
-    connect(bridge, &CodexStatusBridge::eventReceived,
-            this, &PetWindow::handleCodexEvent);
-    (void)bridge->start();
+    if (!QCoreApplication::arguments().contains(QStringLiteral("--composite-smoke")))
+    {
+        auto* bridge = new CodexStatusBridge(this);
+        connect(bridge, &CodexStatusBridge::eventReceived,
+                this, &PetWindow::handleCodexEvent);
+        (void)bridge->start();
 
-    auto* activityWatcher = new CodexActivityWatcher(this);
-    connect(activityWatcher, &CodexActivityWatcher::eventDetected,
-            this, &PetWindow::handleCodexEvent);
-    // Initial discovery can immediately restore an active task. Defer it
-    // until construction and the first widget layout are complete.
-    QTimer::singleShot(0, activityWatcher, [activityWatcher]() {
-        activityWatcher->start();
-    });
+        auto* activityWatcher = new CodexActivityWatcher(this);
+        connect(activityWatcher, &CodexActivityWatcher::eventDetected,
+                this, &PetWindow::handleCodexEvent);
+        // Initial discovery can immediately restore an active task. Defer it
+        // until construction and the first widget layout are complete.
+        QTimer::singleShot(0, activityWatcher, [activityWatcher]() {
+            activityWatcher->start();
+        });
+    }
 }
 
 void PetWindow::loadAssets()
@@ -326,6 +483,14 @@ void PetWindow::loadAssets()
     {
         pixmaps_.insert(it.key(), QPixmap(base + it.value()));
     }
+
+    const int fontId = QFontDatabase::addApplicationFont(
+        base + QStringLiteral("fonts/站酷快乐体2016修订版.ttf"));
+    const QStringList families = QFontDatabase::applicationFontFamilies(fontId);
+    if (!families.isEmpty())
+    {
+        noticeFontFamily_ = families.constFirst();
+    }
 }
 
 void PetWindow::showContextMenu(const QPoint& globalPosition)
@@ -333,17 +498,41 @@ void PetWindow::showContextMenu(const QPoint& globalPosition)
     QMenu menu;
 
     QMenu* scaleMenu = menu.addMenu(QStringLiteral("调整窗口大小"));
-    QActionGroup scaleActions(&menu);
-    scaleActions.setExclusive(true);
-    constexpr std::array scaleOptions{50, 60, 75, 80, 100, 125, 150, 175, 200};
-    for (const int percent : scaleOptions)
-    {
-        QAction* action = scaleMenu->addAction(QStringLiteral("%1%").arg(percent));
-        action->setCheckable(true);
-        action->setChecked(percent == windowScalePercent_);
-        action->setData(percent);
-        scaleActions.addAction(action);
-    }
+    auto* scaleWidget = new QWidget(scaleMenu);
+    auto* scaleLayout = new QVBoxLayout(scaleWidget);
+    scaleLayout->setContentsMargins(12, 8, 12, 8);
+    scaleLayout->setSpacing(5);
+    auto* scaleValue = new QLabel(
+        QStringLiteral("%1%").arg(windowScalePercent_), scaleWidget);
+    scaleValue->setAlignment(Qt::AlignCenter);
+    auto* scaleSlider = new QSlider(Qt::Horizontal, scaleWidget);
+    scaleSlider->setRange(15, 200);
+    scaleSlider->setSingleStep(1);
+    scaleSlider->setPageStep(5);
+    scaleSlider->setValue(windowScalePercent_);
+    scaleSlider->setMinimumWidth(230);
+    scaleSlider->setToolTip(QStringLiteral("15%–200%"));
+    scaleLayout->addWidget(scaleValue);
+    scaleLayout->addWidget(scaleSlider);
+    auto* scaleAction = new QWidgetAction(scaleMenu);
+    scaleAction->setDefaultWidget(scaleWidget);
+    scaleMenu->addAction(scaleAction);
+    connect(scaleSlider, &QSlider::valueChanged, this,
+            [this, scaleValue](const int value) {
+                scaleValue->setText(QStringLiteral("%1%").arg(value));
+                applyWindowScale(value, false);
+            });
+    connect(scaleMenu, &QMenu::aboutToHide, this, [this]() {
+        savePreferences();
+    });
+
+    QMenu* placementMenu = menu.addMenu(QStringLiteral("显示位置"));
+    QAction* abovePlacement = placementMenu->addAction(QStringLiteral("上方"));
+    QAction* leftPlacement = placementMenu->addAction(QStringLiteral("左侧"));
+    abovePlacement->setCheckable(true);
+    leftPlacement->setCheckable(true);
+    abovePlacement->setChecked(noticePlacement_ == QStringLiteral("above"));
+    leftPlacement->setChecked(noticePlacement_ == QStringLiteral("left"));
 
     QAction* about = menu.addAction(QStringLiteral("关于"));
     menu.addSeparator();
@@ -361,9 +550,13 @@ void PetWindow::showContextMenu(const QPoint& globalPosition)
         return;
     }
 
-    if (scaleActions.actions().contains(selected))
+    if (selected == abovePlacement || selected == leftPlacement)
     {
-        setWindowScale(selected->data().toInt());
+        noticePlacement_ = selected == leftPlacement
+            ? QStringLiteral("left")
+            : QStringLiteral("above");
+        positionNoticeHost();
+        savePreferences();
     }
     else if (selected == about)
     {
@@ -389,13 +582,19 @@ void PetWindow::showContextMenu(const QPoint& globalPosition)
 // Shared by the context menu and the visual packaging checks.
 void PetWindow::setWindowScale(const int percent)
 {
-    if (percent == windowScalePercent_)
+    applyWindowScale(percent, true);
+}
+
+void PetWindow::applyWindowScale(const int percent, const bool persist)
+{
+    const int boundedPercent = std::clamp(percent, 15, 200);
+    if (boundedPercent == windowScalePercent_)
     {
         return;
     }
 
     const QPoint bottomRightAnchor = frameGeometry().bottomRight();
-    windowScalePercent_ = percent;
+    windowScalePercent_ = boundedPercent;
     setFixedSize(scaledWindowSize(windowScalePercent_));
     updateScaledUiMetrics();
 
@@ -403,7 +602,10 @@ void PetWindow::setWindowScale(const int percent)
         bottomRightAnchor.x() - width() + 1,
         bottomRightAnchor.y() - height() + 1);
     move(clampedTopLeft(requested));
-    savePreferences();
+    if (persist)
+    {
+        savePreferences();
+    }
 }
 
 void PetWindow::showAboutDialog()
@@ -463,6 +665,27 @@ void PetWindow::showAboutDialog()
 void PetWindow::showAboutForTesting()
 {
     showAboutDialog();
+}
+
+bool PetWindow::saveCompositeForTesting(const QString& path)
+{
+    QRect bounds = frameGeometry();
+    if (noticeHost_->isVisible())
+    {
+        bounds = bounds.united(noticeHost_->frameGeometry());
+    }
+
+    QImage image(bounds.size(), QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    painter.drawPixmap(frameGeometry().topLeft() - bounds.topLeft(), grab());
+    if (noticeHost_->isVisible())
+    {
+        painter.drawPixmap(
+            noticeHost_->frameGeometry().topLeft() - bounds.topLeft(),
+            noticeHost_->grab());
+    }
+    return image.save(path, "PNG");
 }
 
 void PetWindow::beginWindowDrag(const QPoint& globalPosition)
@@ -632,6 +855,7 @@ void PetWindow::restorePreferences()
     updateScaledUiMetrics();
 
     petLocked_ = preferences.locked;
+    noticePlacement_ = preferences.noticePlacement;
     windowDragActive_ = false;
     character_->setDragLocked(petLocked_);
 
@@ -688,6 +912,7 @@ void PetWindow::savePreferences() const
     PetPreferencesData preferences;
     preferences.scalePercent = windowScalePercent_;
     preferences.locked = petLocked_;
+    preferences.noticePlacement = noticePlacement_;
     preferences.hasPosition = true;
     preferences.topLeft = frameGeometry().topLeft();
 
@@ -708,43 +933,20 @@ void PetWindow::moveEvent(QMoveEvent* event)
     positionNoticeHost();
 }
 
-void PetWindow::addNotice(const QString& kind, const QString& title,
-                          const QString& message, const bool persistent)
+void PetWindow::addNotice(
+    const QString& kind, const QString& title, const bool persistent)
 {
     fadeTransientNotices(2500);
 
-    auto* card = new QFrame(noticeHost_);
-    card->setObjectName(QStringLiteral("noticeCard"));
-    card->setProperty("kind", kind);
-    card->setProperty("persistent", persistent);
-    card->setProperty("fading", false);
-    card->setFixedWidth(noticeHost_->width());
+    auto* card = new ThoughtBubbleCard(
+        kind, title, noticeFontFamily_, persistent, noticeHost_);
+    card->setVisualScale(windowScalePercent_);
 
-    auto* row = new QHBoxLayout(card);
-    row->setContentsMargins(14, 10, 9, 10);
-    row->setSpacing(7);
-    auto* textLayout = new QVBoxLayout;
-    textLayout->setSpacing(2);
-    auto* titleLabel = new QLabel(title, card);
-    titleLabel->setObjectName(QStringLiteral("noticeTitle"));
-    auto* detailLabel = new QLabel(message, card);
-    detailLabel->setObjectName(QStringLiteral("noticeDetail"));
-    detailLabel->setWordWrap(true);
-    textLayout->addWidget(titleLabel);
-    textLayout->addWidget(detailLabel);
-    row->addLayout(textLayout, 1);
-
-    if (persistent)
+    if (QToolButton* close = card->closeButton())
     {
-        auto* close = new QToolButton(card);
-        close->setObjectName(QStringLiteral("noticeClose"));
-        close->setText(QStringLiteral("×"));
-        close->setToolTip(QStringLiteral("关闭提示"));
-        close->setCursor(Qt::PointingHandCursor);
         connect(close, &QToolButton::clicked, this, [this, card]() {
             removeNotice(card);
         });
-        row->addWidget(close, 0, Qt::AlignTop);
     }
 
     noticeLayout_->addWidget(card);
