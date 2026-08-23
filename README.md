@@ -27,7 +27,7 @@ https://github.com/user-attachments/assets/e47c77d5-10ef-469a-a449-9d0ef0f2bcd4
 ## 系统要求
 
 - Windows 10 或 Windows 11，x64；
-- 已安装并能正常使用 Codex 桌面应用；
+- 已安装并能正常使用 Codex 桌面应用或 VS Code 插件；
 - Windows PowerShell；
 - 可用的 OpenGL 显卡驱动。
 
@@ -139,10 +139,7 @@ ctest --test-dir .\build --output-on-failure
 src\desktop-app\          C++、Qt 与 Live2D 集成源码
 packaging\windows\        Windows 安装、启动和卸载脚本
 README.md                  项目说明
-CONTRIBUTING.md            贡献指南
-LICENSE                    原创代码许可证
-ASSETS-LICENSE.md           角色模型与美术素材许可证
-NOTICE.md                  第三方组件与资源说明
+LICENSE                    许可证
 ```
 
 GitHub Release 压缩包：
@@ -155,8 +152,6 @@ scripts\                   PowerShell 安装脚本
 卸载WhaleMaid.cmd           卸载入口
 README.md
 LICENSE
-ASSETS-LICENSE.md
-NOTICE.md
 ```
 
 ## 许可
