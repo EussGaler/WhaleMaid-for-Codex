@@ -8,7 +8,6 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QProcess>
-#include <QStringList>
 #include <QThread>
 #include <QTextStream>
 
@@ -46,31 +45,9 @@ HookStatus mapHookEvent(const QJsonObject& input)
     }
     if (eventName == QStringLiteral("Stop"))
     {
-        const QString lastMessage = input.value(QStringLiteral("last_assistant_message"))
-                                        .toString()
-                                        .trimmed();
-        if (lastMessage.isEmpty())
-        {
-            return {QStringLiteral("idle"), {}};
-        }
-        const QString lower = lastMessage.toLower();
-        const QStringList failureMarkers = {
-            QStringLiteral("任务失败"),
-            QStringLiteral("未能完成"),
-            QStringLiteral("无法完成"),
-            QStringLiteral("执行失败"),
-            QStringLiteral("failed to"),
-            QStringLiteral("could not complete"),
-            QStringLiteral("unable to complete"),
-            QStringLiteral("task failed")};
-        for (const QString& marker : failureMarkers)
-        {
-            if (lower.contains(marker))
-            {
-                return {QStringLiteral("failed"), QStringLiteral("任务未能完成，请返回 Codex 查看详情")};
-            }
-        }
-        return {QStringLiteral("completed"), QStringLiteral("本轮任务已完成")};
+        // Stop can also occur while a task is pausing for approval. Terminal
+        // results are sourced from the rollout task_complete event instead.
+        return {QStringLiteral("idle"), {}};
     }
     if (eventName == QStringLiteral("SessionEnd"))
     {

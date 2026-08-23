@@ -96,6 +96,15 @@ int main(int argc, char* argv[])
         window.handleCodexEvent(QStringLiteral("approval"), QStringLiteral("请确认测试操作"), {}, {});
         window.handleCodexEvent(QStringLiteral("failed"), QStringLiteral("测试任务未能完成"), {}, {});
     }
+    else if (arguments.contains(QStringLiteral("--preview-outcome-dedup")))
+    {
+        window.handleCodexEvent(
+            QStringLiteral("completed"), {}, QStringLiteral("primary"), QStringLiteral("turn-1"));
+        window.handleCodexEvent(
+            QStringLiteral("thinking"), {}, QStringLiteral("secondary"), QStringLiteral("turn-2"));
+        window.handleCodexEvent(
+            QStringLiteral("idle"), {}, QStringLiteral("secondary"), QStringLiteral("turn-2"));
+    }
 
 
     const qsizetype aboutSmokeIndex = arguments.indexOf(QStringLiteral("--about-smoke"));

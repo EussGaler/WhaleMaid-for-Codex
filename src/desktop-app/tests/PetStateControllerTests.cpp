@@ -27,6 +27,8 @@ private Q_SLOTS:
     void completionNoticeSurvivesLaterStateChanges();
     void failureNoticeIsPublished();
     void approvalLogsWithoutIdsAreNotDropped();
+    void permissionToolCallsAreRecognized();
+    void guardianCompletionsAreIgnored();
     void startupSettingCanBeToggled();
     void petPreferencesRoundTrip();
 };
@@ -112,21 +114,24 @@ void PetStateControllerTests::approvalLogsWithoutIdsAreNotDropped()
 
     QFile log(QDir(logDirectory).filePath(QStringLiteral("approval.log")));
     QVERIFY(log.open(QIODevice::WriteOnly | QIODevice::Append));
-    const auto appendApproval = [&log]() {
+    const auto appendApproval = [&log](const int requestId) {
         const QString line = QStringLiteral(
-            "%1 info [electron-message-handler] Sending server response "
-            "id=40 method=item/permissions/requestApproval rendererWebContentsId=1\n")
-                                 .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+            "%1 info [desktop-notifications] show approval "
+            "conversationId=test-conversation kind=permissionRequest requestId=%2\n")
+                                 .arg(
+                                     QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs))
+                                 .arg(requestId);
         QCOMPARE(log.write(line.toUtf8()), line.toUtf8().size());
         QVERIFY(log.flush());
     };
 
-    appendApproval();
+    appendApproval(1);
     QTRY_COMPARE_WITH_TIMEOUT(events.count(), 1, 3000);
     QCOMPARE(events.at(0).at(0).toString(), QStringLiteral("approval"));
+    QCOMPARE(events.at(0).at(2).toString(), QStringLiteral("test-conversation"));
     QVERIFY(!events.at(0).at(3).toString().isEmpty());
 
-    appendApproval();
+    appendApproval(2);
     QTRY_COMPARE_WITH_TIMEOUT(events.count(), 2, 3000);
     QVERIFY(events.at(0).at(3).toString() != events.at(1).at(3).toString());
 
@@ -146,6 +151,151 @@ void PetStateControllerTests::approvalLogsWithoutIdsAreNotDropped()
     {
         qputenv("CODEX_HOME", oldCodexHome);
     }
+}
+
+void PetStateControllerTests::permissionToolCallsAreRecognized()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QByteArray oldLocalAppData = qgetenv("LOCALAPPDATA");
+    const QByteArray oldCodexHome = qgetenv("CODEX_HOME");
+    const QString codexHome = QDir(temporary.path()).filePath(QStringLiteral("codex-home"));
+    qputenv("LOCALAPPDATA", temporary.path().toUtf8());
+    qputenv("CODEX_HOME", codexHome.toUtf8());
+
+    const auto cleanup = qScopeGuard([=]() {
+        if (oldLocalAppData.isNull()) qunsetenv("LOCALAPPDATA");
+        else qputenv("LOCALAPPDATA", oldLocalAppData);
+        if (oldCodexHome.isNull()) qunsetenv("CODEX_HOME");
+        else qputenv("CODEX_HOME", oldCodexHome);
+    });
+
+    const QDate date = QDate::currentDate();
+    const QString sessionDirectory = QDir(codexHome).filePath(
+        QStringLiteral("sessions/%1/%2/%3")
+            .arg(date.year(), 4, 10, QLatin1Char('0'))
+            .arg(date.month(), 2, 10, QLatin1Char('0'))
+            .arg(date.day(), 2, 10, QLatin1Char('0')));
+    QVERIFY(QDir().mkpath(sessionDirectory));
+
+    QFile session(QDir(sessionDirectory).filePath(
+        QStringLiteral("rollout-test-01permission-session.jsonl")));
+    QVERIFY(session.open(QIODevice::WriteOnly | QIODevice::Append));
+    const QByteArray metadata =
+        "{\"type\":\"session_meta\",\"payload\":{\"type\":\"session_meta\"," 
+        "\"source\":\"vscode\"}}\n";
+    QCOMPARE(session.write(metadata), metadata.size());
+    QVERIFY(session.flush());
+
+    CodexActivityWatcher watcher;
+    QSignalSpy events(&watcher, &CodexActivityWatcher::eventDetected);
+    watcher.start();
+
+    const QByteArray normalExec =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"custom_tool_call\",\"name\":\"exec\"," 
+        "\"input\":\"const r = await tools.exec_command({});\"," 
+        "\"internal_chat_message_metadata_passthrough\":{"
+        "\"turn_id\":\"turn-permission-test\"}}}\n";
+    QCOMPARE(session.write(normalExec), normalExec.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 1, 3000);
+    QCOMPARE(events.at(0).at(0).toString(), QStringLiteral("working"));
+    QCOMPARE(events.at(0).at(3).toString(), QStringLiteral("turn-permission-test"));
+
+    const QByteArray toolOutput =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"custom_tool_call_output\"}}\n";
+    QCOMPARE(session.write(toolOutput), toolOutput.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 2, 3000);
+    QCOMPARE(events.at(1).at(0).toString(), QStringLiteral("thinking"));
+
+    const QByteArray wrappedPermission =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"custom_tool_call\",\"name\":\"exec\"," 
+        "\"input\":\"const r = await tools.request_permissions({});\"}}\n";
+    QCOMPARE(session.write(wrappedPermission), wrappedPermission.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 3, 3000);
+    QCOMPARE(events.at(2).at(0).toString(), QStringLiteral("approval"));
+
+    QCOMPARE(session.write(toolOutput), toolOutput.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 4, 3000);
+
+    const QByteArray directPermission =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"custom_tool_call\",\"name\":\"request_permissions\"," 
+        "\"input\":\"{}\"}}\n";
+    QCOMPARE(session.write(directPermission), directPermission.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 5, 3000);
+    QCOMPARE(events.at(4).at(0).toString(), QStringLiteral("approval"));
+}
+
+void PetStateControllerTests::guardianCompletionsAreIgnored()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QByteArray oldLocalAppData = qgetenv("LOCALAPPDATA");
+    const QByteArray oldCodexHome = qgetenv("CODEX_HOME");
+    const QString codexHome = QDir(temporary.path()).filePath(QStringLiteral("codex-home"));
+    qputenv("LOCALAPPDATA", temporary.path().toUtf8());
+    qputenv("CODEX_HOME", codexHome.toUtf8());
+
+    const auto cleanup = qScopeGuard([=]() {
+        if (oldLocalAppData.isNull()) qunsetenv("LOCALAPPDATA");
+        else qputenv("LOCALAPPDATA", oldLocalAppData);
+        if (oldCodexHome.isNull()) qunsetenv("CODEX_HOME");
+        else qputenv("CODEX_HOME", oldCodexHome);
+    });
+
+    const QDate date = QDate::currentDate();
+    const QString sessionDirectory = QDir(codexHome).filePath(
+        QStringLiteral("sessions/%1/%2/%3")
+            .arg(date.year(), 4, 10, QLatin1Char('0'))
+            .arg(date.month(), 2, 10, QLatin1Char('0'))
+            .arg(date.day(), 2, 10, QLatin1Char('0')));
+    QVERIFY(QDir().mkpath(sessionDirectory));
+
+    QFile guardian(QDir(sessionDirectory).filePath(
+        QStringLiteral("rollout-test-01guardian-session.jsonl")));
+    QFile primary(QDir(sessionDirectory).filePath(
+        QStringLiteral("rollout-test-01primary-session.jsonl")));
+    QVERIFY(guardian.open(QIODevice::WriteOnly | QIODevice::Append));
+    QVERIFY(primary.open(QIODevice::WriteOnly | QIODevice::Append));
+
+    const QByteArray guardianMeta =
+        "{\"type\":\"session_meta\",\"payload\":{\"type\":\"session_meta\","
+        "\"source\":{\"subagent\":{\"other\":\"guardian\"}}}}\n";
+    const QByteArray primaryMeta =
+        "{\"type\":\"session_meta\",\"payload\":{\"type\":\"session_meta\","
+        "\"source\":\"vscode\"}}\n";
+    QCOMPARE(guardian.write(guardianMeta), guardianMeta.size());
+    QCOMPARE(primary.write(primaryMeta), primaryMeta.size());
+    QVERIFY(guardian.flush());
+    QVERIFY(primary.flush());
+
+    CodexActivityWatcher watcher;
+    QSignalSpy events(&watcher, &CodexActivityWatcher::eventDetected);
+    watcher.start();
+
+    const QByteArray guardianComplete =
+        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\","
+        "\"turn_id\":\"guardian-turn\"}}\n";
+    QCOMPARE(guardian.write(guardianComplete), guardianComplete.size());
+    QVERIFY(guardian.flush());
+    QTest::qWait(800);
+    QCOMPARE(events.count(), 0);
+
+    const QByteArray primaryComplete =
+        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\","
+        "\"turn_id\":\"primary-turn\"}}\n";
+    QCOMPARE(primary.write(primaryComplete), primaryComplete.size());
+    QVERIFY(primary.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 1, 3000);
+    QCOMPARE(events.at(0).at(0).toString(), QStringLiteral("completed"));
 }
 
 void PetStateControllerTests::startupSettingCanBeToggled()

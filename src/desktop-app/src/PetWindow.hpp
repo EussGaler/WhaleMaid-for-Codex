@@ -6,6 +6,7 @@
 #include <QPoint>
 #include <QPixmap>
 #include <QPointer>
+#include <QSet>
 #include <QString>
 #include <QWidget>
 
@@ -53,6 +54,7 @@ private:
     void endWindowDrag();
     void addNotice(const QString& kind, const QString& title, bool persistent);
     void fadeTransientNotices(int delayMilliseconds);
+    void fadePersistentNotices(int delayMilliseconds);
     void fadeAndRemoveNotice(QFrame* card, int delayMilliseconds);
     void removeNotice(QFrame* card);
     void clearNotices();
@@ -79,6 +81,7 @@ private:
     int windowScalePercent_ = 75;
     QHash<QString, QPixmap> pixmaps_;
     QHash<QString, SessionState> sessionStates_;
+    QSet<QString> postedOutcomeKeys_;
     QString latestSessionId_;
     qint64 sessionSequence_ = 0;
     QString noticeFontFamily_;

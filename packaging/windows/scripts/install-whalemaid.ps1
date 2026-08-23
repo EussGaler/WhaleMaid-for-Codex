@@ -176,7 +176,6 @@ Add-HookGroup $config 'PermissionRequest' '*'
 Add-HookGroup $config 'PostToolUse' '*'
 Add-HookGroup $config 'SubagentStart' '*'
 Add-HookGroup $config 'SubagentStop' '*'
-Add-HookGroup $config 'Stop'
 Add-HookGroup $config 'SessionEnd'
 Write-HooksConfig $config
 

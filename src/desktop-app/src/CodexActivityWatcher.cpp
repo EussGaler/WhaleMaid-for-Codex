@@ -241,7 +241,31 @@ void CodexActivityWatcher::processSessionLine(
     const QString recordType = root.value(QStringLiteral("type")).toString();
     const QJsonObject payload = root.value(QStringLiteral("payload")).toObject();
     const QString payloadType = payload.value(QStringLiteral("type")).toString();
-    const QString eventTurn = payload.value(QStringLiteral("turn_id")).toString();
+
+    if (recordType == QStringLiteral("session_meta"))
+    {
+        const QJsonValue source = payload.value(QStringLiteral("source"));
+        state.ignored = (source.isObject()
+                         && source.toObject().contains(QStringLiteral("subagent")))
+            || (source.isString()
+                && source.toString().contains(
+                    QStringLiteral("subagent"), Qt::CaseInsensitive));
+        return;
+    }
+    if (state.ignored)
+    {
+        return;
+    }
+
+    QString eventTurn = payload.value(QStringLiteral("turn_id")).toString();
+    if (eventTurn.isEmpty())
+    {
+        eventTurn = payload
+                        .value(QStringLiteral("internal_chat_message_metadata_passthrough"))
+                        .toObject()
+                        .value(QStringLiteral("turn_id"))
+                        .toString();
+    }
     if (!eventTurn.isEmpty())
     {
         state.turnId = eventTurn;
@@ -276,8 +300,29 @@ void CodexActivityWatcher::processSessionLine(
     {
         if (payloadType == QStringLiteral("custom_tool_call"))
         {
-            publish(state, QStringLiteral("working"),
-                    QStringLiteral("正在处理任务"), state.turnId, emitEvents);
+            const QString toolName = payload.value(QStringLiteral("name")).toString();
+            const QString toolInput = payload.value(QStringLiteral("input")).toString();
+            const bool directPermissionRequest =
+                toolName.compare(
+                    QStringLiteral("request_permissions"),
+                    Qt::CaseInsensitive) == 0;
+            const bool wrappedPermissionRequest =
+                toolName.compare(QStringLiteral("exec"), Qt::CaseInsensitive) == 0
+                && toolInput.contains(
+                    QRegularExpression(
+                        QStringLiteral(
+                            R"(\bawait\s+tools\s*\.\s*request_permissions\s*\()"),
+                        QRegularExpression::CaseInsensitiveOption));
+            if (directPermissionRequest || wrappedPermissionRequest)
+            {
+                publish(state, QStringLiteral("approval"),
+                        QStringLiteral("需要你的确认"), state.turnId, emitEvents);
+            }
+            else
+            {
+                publish(state, QStringLiteral("working"),
+                        QStringLiteral("正在处理任务"), state.turnId, emitEvents);
+            }
         }
         else if (payloadType == QStringLiteral("reasoning")
                  || payloadType == QStringLiteral("custom_tool_call_output"))
@@ -335,7 +380,13 @@ void CodexActivityWatcher::readDesktopLog(const QString& path)
             break;
         }
         const QString line = QString::fromUtf8(rawLine);
-        if (!line.contains(QStringLiteral("permissions/requestApproval"), Qt::CaseInsensitive))
+        const bool desktopApprovalStarted =
+            line.contains(QStringLiteral("show approval"), Qt::CaseInsensitive)
+            && line.contains(QStringLiteral("kind=permissionRequest"), Qt::CaseInsensitive);
+        const bool legacyApprovalStarted =
+            line.contains(QStringLiteral("permissions/requestApproval"), Qt::CaseInsensitive)
+            && !line.contains(QStringLiteral("Sending server response"), Qt::CaseInsensitive);
+        if (!desktopApprovalStarted && !legacyApprovalStarted)
         {
             continue;
         }
@@ -352,7 +403,10 @@ void CodexActivityWatcher::readDesktopLog(const QString& path)
         }
         const QString sessionId = captureField(line, QStringLiteral("conversationId"));
         const QString turnId = captureField(line, QStringLiteral("turnId"));
-        const QString key = path + QLatin1Char(':') + QString::number(lineStart);
+        const QString requestId = captureField(line, QStringLiteral("requestId"));
+        const QString key = !requestId.isEmpty()
+            ? sessionId + QStringLiteral(":approval:") + requestId
+            : path + QLatin1Char(':') + QString::number(lineStart);
         if (key != lastApprovalKey_)
         {
             lastApprovalKey_ = key;

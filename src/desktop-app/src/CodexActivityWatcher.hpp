@@ -29,6 +29,7 @@ private:
         QString turnId;
         QString lastStatus;
         QString lastStatusTurnId;
+        bool ignored = false;
     };
 
     struct LogFileState

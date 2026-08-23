@@ -411,12 +411,14 @@ void PetWindow::connectInteractions()
                     fadeTransientNotices(0);
                     break;
                 case PetStateController::PrimaryState::Thinking:
+                    fadePersistentNotices(0);
                     addNotice(
                         QStringLiteral("thinking"),
                         QStringLiteral("思考中"),
                         false);
                     break;
                 case PetStateController::PrimaryState::Working:
+                    fadePersistentNotices(0);
                     addNotice(
                         QStringLiteral("working"),
                         QStringLiteral("工作中"),
@@ -534,14 +536,14 @@ void PetWindow::showContextMenu(const QPoint& globalPosition)
     abovePlacement->setChecked(noticePlacement_ == QStringLiteral("above"));
     leftPlacement->setChecked(noticePlacement_ == QStringLiteral("left"));
 
-    QAction* about = menu.addAction(QStringLiteral("关于"));
-    menu.addSeparator();
     QAction* lockPetAction = menu.addAction(QStringLiteral("锁定桌宠"));
     lockPetAction->setCheckable(true);
     lockPetAction->setChecked(petLocked_);
     QAction* clearNoticesAction = menu.addAction(QStringLiteral("清除提示"));
     clearNoticesAction->setEnabled(!noticeHost_->findChildren<QFrame*>(
         QString(), Qt::FindDirectChildrenOnly).isEmpty());
+    menu.addSeparator();
+    QAction* about = menu.addAction(QStringLiteral("关于"));
     QAction* quit = menu.addAction(QStringLiteral("退出"));
 
     QAction* selected = menu.exec(globalPosition);
@@ -814,12 +816,30 @@ void PetWindow::applyLatestSessionState()
     }
     else if (snapshot.status == QStringLiteral("completed"))
     {
-        state_.postCompletion(snapshot.message);
+        const QString outcomeKey = latest.key()
+            + QChar(0x1f)
+            + (snapshot.turnId.isEmpty()
+                   ? QStringLiteral("no-turn:") + snapshot.message
+                   : snapshot.turnId);
+        if (!postedOutcomeKeys_.contains(outcomeKey))
+        {
+            postedOutcomeKeys_.insert(outcomeKey);
+            state_.postCompletion(snapshot.message);
+        }
         state_.setPrimaryState(PetStateController::PrimaryState::Idle);
     }
     else if (snapshot.status == QStringLiteral("failed"))
     {
-        state_.postFailure(snapshot.message);
+        const QString outcomeKey = latest.key()
+            + QChar(0x1f)
+            + (snapshot.turnId.isEmpty()
+                   ? QStringLiteral("no-turn:") + snapshot.message
+                   : snapshot.turnId);
+        if (!postedOutcomeKeys_.contains(outcomeKey))
+        {
+            postedOutcomeKeys_.insert(outcomeKey);
+            state_.postFailure(snapshot.message);
+        }
         state_.setPrimaryState(PetStateController::PrimaryState::Idle);
     }
     else if (snapshot.status == QStringLiteral("clear"))
@@ -936,7 +956,7 @@ void PetWindow::moveEvent(QMoveEvent* event)
 void PetWindow::addNotice(
     const QString& kind, const QString& title, const bool persistent)
 {
-    fadeTransientNotices(2500);
+    fadeTransientNotices(0);
 
     auto* card = new ThoughtBubbleCard(
         kind, title, noticeFontFamily_, persistent, noticeHost_);
@@ -962,6 +982,20 @@ void PetWindow::fadeTransientNotices(const int delayMilliseconds)
     for (QFrame* card : cards)
     {
         if (!card->property("persistent").toBool()
+            && !card->property("fading").toBool())
+        {
+            fadeAndRemoveNotice(card, delayMilliseconds);
+        }
+    }
+}
+
+void PetWindow::fadePersistentNotices(const int delayMilliseconds)
+{
+    const auto cards = noticeHost_->findChildren<QFrame*>(
+        QString(), Qt::FindDirectChildrenOnly);
+    for (QFrame* card : cards)
+    {
+        if (card->property("persistent").toBool()
             && !card->property("fading").toBool())
         {
             fadeAndRemoveNotice(card, delayMilliseconds);
