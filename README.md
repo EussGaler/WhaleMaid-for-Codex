@@ -20,7 +20,7 @@ WhaleMaid-for-Codex 是面向 Windows Codex 桌面应用的 Live2D 桌宠。角�
 
 ### 效果预览
 
-<img width="253" height="448" alt="演示图片" src="https://github.com/user-attachments/assets/2043f4d6-60ef-4d8d-905f-223ec9e6f181" />
+<img width="325" height="395" alt="演示图片" src="https://github.com/user-attachments/assets/f84eb989-fe84-4540-a71b-729bf3262278" />
 
 https://github.com/user-attachments/assets/e47c77d5-10ef-469a-a449-9d0ef0f2bcd4
 
