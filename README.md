@@ -1,6 +1,6 @@
 # WhaleMaid-for-Codex
 
-WhaleMaid-for-Codex 是面向 Windows Codex 桌面应用的 Live2D 桌宠。角色会自动呼吸、眨眼并跟随鼠标视线，同时显示 Codex 当前的思考、工作、批准和任务结果状态。
+WhaleMaid-for-Codex 是面向 Windows Codex 桌面端和 VS Code 插件的 Live2D 桌宠。角色会自动呼吸、眨眼并跟随鼠标视线，同时显示 Codex 当前的思考、工作、批准和任务结果状态。
 
 本项目公开源码并允许非商业学习、修改和二次开发，但不允许未经授权的商业使用。它不是采用 OSI 认可许可证的开源软件。女仆鲸鱼人设来自 bilibili: [@ZipZipPipe](https://space.bilibili.com/4168597)。
 
@@ -20,14 +20,14 @@ WhaleMaid-for-Codex 是面向 Windows Codex 桌面应用的 Live2D 桌宠。角�
 
 ### 效果预览
 
-<img width="253" height="448" alt="演示图片" src="https://github.com/user-attachments/assets/2043f4d6-60ef-4d8d-905f-223ec9e6f181" />
+<img width="325" height="395" alt="演示图片" src="https://github.com/user-attachments/assets/f84eb989-fe84-4540-a71b-729bf3262278" />
 
 https://github.com/user-attachments/assets/e47c77d5-10ef-469a-a449-9d0ef0f2bcd4
 
 ## 系统要求
 
 - Windows 10 或 Windows 11，x64；
-- 已安装并能正常使用 Codex 桌面应用；
+- 已安装并能正常使用 Codex 桌面应用或 VS Code 插件；
 - Windows PowerShell；
 - 可用的 OpenGL 显卡驱动。
 
@@ -139,10 +139,7 @@ ctest --test-dir .\build --output-on-failure
 src\desktop-app\          C++、Qt 与 Live2D 集成源码
 packaging\windows\        Windows 安装、启动和卸载脚本
 README.md                  项目说明
-CONTRIBUTING.md            贡献指南
-LICENSE                    原创代码许可证
-ASSETS-LICENSE.md           角色模型与美术素材许可证
-NOTICE.md                  第三方组件与资源说明
+LICENSE                    许可证
 ```
 
 GitHub Release 压缩包：
@@ -155,8 +152,6 @@ scripts\                   PowerShell 安装脚本
 卸载WhaleMaid.cmd           卸载入口
 README.md
 LICENSE
-ASSETS-LICENSE.md
-NOTICE.md
 ```
 
 ## 许可
