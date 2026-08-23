@@ -1,6 +1,6 @@
 # WhaleMaid-for-Codex
 
-WhaleMaid-for-Codex 是面向 Windows Codex 桌面应用的 Live2D 桌宠。角色会自动呼吸、眨眼并跟随鼠标视线，同时显示 Codex 当前的思考、工作、批准和任务结果状态。
+WhaleMaid-for-Codex 是面向 Windows Codex 桌面端和 VS Code 插件的 Live2D 桌宠。角色会自动呼吸、眨眼并跟随鼠标视线，同时显示 Codex 当前的思考、工作、批准和任务结果状态。
 
 本项目公开源码并允许非商业学习、修改和二次开发，但不允许未经授权的商业使用。它不是采用 OSI 认可许可证的开源软件。女仆鲸鱼人设来自 bilibili: [@ZipZipPipe](https://space.bilibili.com/4168597)。
 
