@@ -27,7 +27,11 @@ private Q_SLOTS:
     void completionNoticeSurvivesLaterStateChanges();
     void failureNoticeIsPublished();
     void approvalLogsWithoutIdsAreNotDropped();
+    void storeDesktopLogsAreDiscovered();
+    void duplicateDesktopLogViewsEmitApprovalOnce();
+    void desktopPermissionNotificationIsRecognizedOnce();
     void permissionToolCallsAreRecognized();
+    void functionToolCallsAreRecognized();
     void guardianCompletionsAreIgnored();
     void startupSettingCanBeToggled();
     void petPreferencesRoundTrip();
@@ -153,6 +157,147 @@ void PetStateControllerTests::approvalLogsWithoutIdsAreNotDropped()
     }
 }
 
+void PetStateControllerTests::storeDesktopLogsAreDiscovered()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QByteArray oldLocalAppData = qgetenv("LOCALAPPDATA");
+    const QByteArray oldCodexHome = qgetenv("CODEX_HOME");
+    qputenv("LOCALAPPDATA", temporary.path().toUtf8());
+    qputenv("CODEX_HOME", QDir(temporary.path()).filePath(QStringLiteral("codex-home")).toUtf8());
+    const auto cleanup = qScopeGuard([=]() {
+        if (oldLocalAppData.isNull()) qunsetenv("LOCALAPPDATA");
+        else qputenv("LOCALAPPDATA", oldLocalAppData);
+        if (oldCodexHome.isNull()) qunsetenv("CODEX_HOME");
+        else qputenv("CODEX_HOME", oldCodexHome);
+    });
+
+    const QDate date = QDate::currentDate();
+    const QString logDirectory = QDir(temporary.path()).filePath(
+        QStringLiteral("Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/Codex/Logs/%1/%2/%3")
+            .arg(date.year(), 4, 10, QLatin1Char('0'))
+            .arg(date.month(), 2, 10, QLatin1Char('0'))
+            .arg(date.day(), 2, 10, QLatin1Char('0')));
+    QVERIFY(QDir().mkpath(logDirectory));
+    QFile log(QDir(logDirectory).filePath(QStringLiteral("store-approval.log")));
+    QVERIFY(log.open(QIODevice::WriteOnly | QIODevice::Append));
+
+    CodexActivityWatcher watcher;
+    QSignalSpy events(&watcher, &CodexActivityWatcher::eventDetected);
+    watcher.start();
+
+    const QString line = QStringLiteral(
+        "%1 info [desktop-notifications] show approval conversationId=store-test "
+        "kind=permissionRequest requestId=store-request\n")
+                             .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    QCOMPARE(log.write(line.toUtf8()), line.toUtf8().size());
+    QVERIFY(log.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 1, 3000);
+    QCOMPARE(events.at(0).at(0).toString(), QStringLiteral("approval"));
+    QCOMPARE(events.at(0).at(2).toString(), QStringLiteral("store-test"));
+}
+
+void PetStateControllerTests::duplicateDesktopLogViewsEmitApprovalOnce()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QByteArray oldLocalAppData = qgetenv("LOCALAPPDATA");
+    const QByteArray oldCodexHome = qgetenv("CODEX_HOME");
+    qputenv("LOCALAPPDATA", temporary.path().toUtf8());
+    qputenv("CODEX_HOME", QDir(temporary.path()).filePath(QStringLiteral("codex-home")).toUtf8());
+    const auto cleanup = qScopeGuard([=]() {
+        if (oldLocalAppData.isNull()) qunsetenv("LOCALAPPDATA");
+        else qputenv("LOCALAPPDATA", oldLocalAppData);
+        if (oldCodexHome.isNull()) qunsetenv("CODEX_HOME");
+        else qputenv("CODEX_HOME", oldCodexHome);
+    });
+
+    const QDate date = QDate::currentDate();
+    const QString suffix = QStringLiteral("%1/%2/%3")
+                               .arg(date.year(), 4, 10, QLatin1Char('0'))
+                               .arg(date.month(), 2, 10, QLatin1Char('0'))
+                               .arg(date.day(), 2, 10, QLatin1Char('0'));
+    const QString legacyDirectory = QDir(temporary.path()).filePath(
+        QStringLiteral("Codex/Logs/%1").arg(suffix));
+    const QString storeDirectory = QDir(temporary.path()).filePath(
+        QStringLiteral("Packages/OpenAI.Codex_another-family/LocalCache/Local/Codex/Logs/%1")
+            .arg(suffix));
+    QVERIFY(QDir().mkpath(legacyDirectory));
+    QVERIFY(QDir().mkpath(storeDirectory));
+    QFile legacyLog(QDir(legacyDirectory).filePath(QStringLiteral("approval.log")));
+    QFile storeLog(QDir(storeDirectory).filePath(QStringLiteral("approval.log")));
+    QVERIFY(legacyLog.open(QIODevice::WriteOnly | QIODevice::Append));
+    QVERIFY(storeLog.open(QIODevice::WriteOnly | QIODevice::Append));
+
+    CodexActivityWatcher watcher;
+    QSignalSpy events(&watcher, &CodexActivityWatcher::eventDetected);
+    watcher.start();
+
+    const QString line = QStringLiteral(
+        "%1 info [desktop-notifications] show approval conversationId=duplicate-test "
+        "kind=permissionRequest requestId=same-request\n")
+                             .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    QCOMPARE(legacyLog.write(line.toUtf8()), line.toUtf8().size());
+    QCOMPARE(storeLog.write(line.toUtf8()), line.toUtf8().size());
+    QVERIFY(legacyLog.flush());
+    QVERIFY(storeLog.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 1, 3000);
+    QTest::qWait(750);
+    QCOMPARE(events.count(), 1);
+}
+
+void PetStateControllerTests::desktopPermissionNotificationIsRecognizedOnce()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QByteArray oldLocalAppData = qgetenv("LOCALAPPDATA");
+    const QByteArray oldCodexHome = qgetenv("CODEX_HOME");
+    qputenv("LOCALAPPDATA", temporary.path().toUtf8());
+    qputenv("CODEX_HOME", QDir(temporary.path()).filePath(QStringLiteral("codex-home")).toUtf8());
+    const auto cleanup = qScopeGuard([=]() {
+        if (oldLocalAppData.isNull()) qunsetenv("LOCALAPPDATA");
+        else qputenv("LOCALAPPDATA", oldLocalAppData);
+        if (oldCodexHome.isNull()) qunsetenv("CODEX_HOME");
+        else qputenv("CODEX_HOME", oldCodexHome);
+    });
+
+    const QDate date = QDate::currentDate();
+    const QString logDirectory = QDir(temporary.path()).filePath(
+        QStringLiteral("Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/Codex/Logs/%1/%2/%3")
+            .arg(date.year(), 4, 10, QLatin1Char('0'))
+            .arg(date.month(), 2, 10, QLatin1Char('0'))
+            .arg(date.day(), 2, 10, QLatin1Char('0')));
+    QVERIFY(QDir().mkpath(logDirectory));
+    QFile log(QDir(logDirectory).filePath(QStringLiteral("notification.log")));
+    QVERIFY(log.open(QIODevice::WriteOnly | QIODevice::Append));
+
+    CodexActivityWatcher watcher;
+    QSignalSpy events(&watcher, &CodexActivityWatcher::eventDetected);
+    watcher.start();
+
+    const QString timestamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+    const QString approvalLine = QStringLiteral(
+        "%1 info [electron-message-handler] [desktop-notifications] show approval "
+        "conversationId=notification-test kind=commandExecution requestId=17\n")
+                                     .arg(timestamp);
+    const QString forwardedLine = QStringLiteral(
+        "%1 info [notifications-service] [desktop-notifications] forward show "
+        "kind=permission notificationId=approval-local-17\n")
+                                      .arg(timestamp);
+    const QString notificationLine = QStringLiteral(
+        "%1 info [desktop-notifications] show notification actionCount=0 "
+        "kind=permission notificationId=approval-local-17\n")
+                                         .arg(timestamp);
+    QCOMPARE(log.write(approvalLine.toUtf8()), approvalLine.toUtf8().size());
+    QCOMPARE(log.write(forwardedLine.toUtf8()), forwardedLine.toUtf8().size());
+    QCOMPARE(log.write(notificationLine.toUtf8()), notificationLine.toUtf8().size());
+    QVERIFY(log.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 1, 3000);
+    QTest::qWait(750);
+    QCOMPARE(events.count(), 1);
+    QCOMPARE(events.at(0).at(0).toString(), QStringLiteral("approval"));
+}
+
 void PetStateControllerTests::permissionToolCallsAreRecognized()
 {
     QTemporaryDir temporary;
@@ -229,6 +374,156 @@ void PetStateControllerTests::permissionToolCallsAreRecognized()
         "\"type\":\"custom_tool_call\",\"name\":\"request_permissions\"," 
         "\"input\":\"{}\"}}\n";
     QCOMPARE(session.write(directPermission), directPermission.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 5, 3000);
+    QCOMPARE(events.at(4).at(0).toString(), QStringLiteral("approval"));
+
+    QCOMPARE(session.write(toolOutput), toolOutput.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 6, 3000);
+
+    const QByteArray escalatedExec =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"custom_tool_call\",\"name\":\"exec\","
+        "\"input\":\"const r = await tools.exec_command({"
+        "sandbox_permissions: \\\"require_escalated\\\","
+        "justification: \\\"approval test one\\\"});\"}}\n";
+    QCOMPARE(session.write(escalatedExec), escalatedExec.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 7, 3000);
+    QCOMPARE(events.at(6).at(0).toString(), QStringLiteral("approval"));
+
+    QCOMPARE(session.write(toolOutput), toolOutput.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 8, 3000);
+
+    const QByteArray escalatedExecSingleQuotes =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"custom_tool_call\",\"name\":\"exec_command\","
+        "\"input\":\"sandbox_permissions   :   'require_escalated'\"}}\n";
+    QCOMPARE(
+        session.write(escalatedExecSingleQuotes),
+        escalatedExecSingleQuotes.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 9, 3000);
+    QCOMPARE(events.at(8).at(0).toString(), QStringLiteral("approval"));
+
+    QCOMPARE(session.write(toolOutput), toolOutput.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 10, 3000);
+
+    const QByteArray escalatedExecQuotedKey =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"custom_tool_call\",\"name\":\"exec\","
+        "\"input\":\"{\\\"sandbox_permissions\\\":"
+        "\\\"require_escalated\\\"}\"}}\n";
+    QCOMPARE(session.write(escalatedExecQuotedKey), escalatedExecQuotedKey.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 11, 3000);
+    QCOMPARE(events.at(10).at(0).toString(), QStringLiteral("approval"));
+
+    QCOMPARE(session.write(toolOutput), toolOutput.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 12, 3000);
+
+    const QByteArray defaultSandboxExec =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"custom_tool_call\",\"name\":\"exec\","
+        "\"input\":\"sandbox_permissions: \\\"use_default\\\"\"}}\n";
+    QCOMPARE(session.write(defaultSandboxExec), defaultSandboxExec.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 13, 3000);
+    QCOMPARE(events.at(12).at(0).toString(), QStringLiteral("working"));
+
+    QCOMPARE(session.write(toolOutput), toolOutput.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 14, 3000);
+
+    const QByteArray normalExecCommand =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"custom_tool_call\",\"name\":\"exec_command\","
+        "\"input\":\"{\\\"cmd\\\":\\\"echo ok\\\"}\"}}\n";
+    QCOMPARE(session.write(normalExecCommand), normalExecCommand.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 15, 3000);
+    QCOMPARE(events.at(14).at(0).toString(), QStringLiteral("working"));
+}
+
+void PetStateControllerTests::functionToolCallsAreRecognized()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QByteArray oldLocalAppData = qgetenv("LOCALAPPDATA");
+    const QByteArray oldCodexHome = qgetenv("CODEX_HOME");
+    const QString codexHome = QDir(temporary.path()).filePath(QStringLiteral("codex-home"));
+    qputenv("LOCALAPPDATA", temporary.path().toUtf8());
+    qputenv("CODEX_HOME", codexHome.toUtf8());
+    const auto cleanup = qScopeGuard([=]() {
+        if (oldLocalAppData.isNull()) qunsetenv("LOCALAPPDATA");
+        else qputenv("LOCALAPPDATA", oldLocalAppData);
+        if (oldCodexHome.isNull()) qunsetenv("CODEX_HOME");
+        else qputenv("CODEX_HOME", oldCodexHome);
+    });
+
+    const QDate date = QDate::currentDate();
+    const QString sessionDirectory = QDir(codexHome).filePath(
+        QStringLiteral("sessions/%1/%2/%3")
+            .arg(date.year(), 4, 10, QLatin1Char('0'))
+            .arg(date.month(), 2, 10, QLatin1Char('0'))
+            .arg(date.day(), 2, 10, QLatin1Char('0')));
+    QVERIFY(QDir().mkpath(sessionDirectory));
+    QFile session(QDir(sessionDirectory).filePath(
+        QStringLiteral("rollout-2026-08-24T09-00-00-01a03303-1923-71d0-8f26-96d5aad7c3b0.jsonl")));
+    QVERIFY(session.open(QIODevice::WriteOnly | QIODevice::Append));
+    const QByteArray metadata =
+        "{\"type\":\"session_meta\",\"payload\":{\"type\":\"session_meta\","
+        "\"source\":\"vscode\"}}\n";
+    QCOMPARE(session.write(metadata), metadata.size());
+    QVERIFY(session.flush());
+
+    CodexActivityWatcher watcher;
+    QSignalSpy events(&watcher, &CodexActivityWatcher::eventDetected);
+    watcher.start();
+
+    const QByteArray normalFunctionCall =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"function_call\",\"name\":\"exec_command\","
+        "\"arguments\":\"{\\\"cmd\\\":\\\"dir\\\"}\","
+        "\"call_id\":\"call-normal\"}}\n";
+    QCOMPARE(session.write(normalFunctionCall), normalFunctionCall.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 1, 3000);
+    QCOMPARE(events.at(0).at(0).toString(), QStringLiteral("working"));
+
+    const QByteArray functionOutput =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"function_call_output\",\"call_id\":\"call-normal\","
+        "\"output\":\"done\"}}\n";
+    QCOMPARE(session.write(functionOutput), functionOutput.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 2, 3000);
+    QCOMPARE(events.at(1).at(0).toString(), QStringLiteral("thinking"));
+
+    const QByteArray escalatedFunctionCall =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"function_call\",\"name\":\"exec_command\","
+        "\"arguments\":\"{\\\"cmd\\\":\\\"dir\\\","
+        "\\\"sandbox_permissions\\\":\\\"require_escalated\\\","
+        "\\\"justification\\\":\\\"approval test\\\"}\","
+        "\"call_id\":\"call-approval\"}}\n";
+    QCOMPARE(session.write(escalatedFunctionCall), escalatedFunctionCall.size());
+    QVERIFY(session.flush());
+    QTRY_COMPARE_WITH_TIMEOUT(events.count(), 3, 3000);
+    QCOMPARE(events.at(2).at(0).toString(), QStringLiteral("approval"));
+
+    const QByteArray objectArgumentsFunctionCall =
+        "{\"type\":\"response_item\",\"payload\":{"
+        "\"type\":\"function_call\",\"name\":\"exec_command\","
+        "\"arguments\":{\"cmd\":\"dir\","
+        "\"sandbox_permissions\":\"require_escalated\"},"
+        "\"call_id\":\"call-object-approval\"}}\n";
+    QCOMPARE(session.write(functionOutput), functionOutput.size());
+    QCOMPARE(session.write(objectArgumentsFunctionCall), objectArgumentsFunctionCall.size());
     QVERIFY(session.flush());
     QTRY_COMPARE_WITH_TIMEOUT(events.count(), 5, 3000);
     QCOMPARE(events.at(4).at(0).toString(), QStringLiteral("approval"));

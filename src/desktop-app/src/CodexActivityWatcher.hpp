@@ -2,7 +2,9 @@
 
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
+#include <QStringList>
 
 class QTimer;
 
@@ -55,7 +57,8 @@ private:
     QTimer* timer_ = nullptr;
     QHash<QString, SessionFileState> sessionFiles_;
     QHash<QString, LogFileState> logFiles_;
-    QString lastApprovalKey_;
+    QSet<QString> recentApprovalKeys_;
+    QStringList recentApprovalKeyOrder_;
     int discoveryCountdown_ = 0;
     bool initialDiscoveryComplete_ = false;
 };

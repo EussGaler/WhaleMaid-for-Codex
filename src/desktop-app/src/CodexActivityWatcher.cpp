@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -17,8 +18,53 @@ namespace
 constexpr qint64 InitialTailBytes = 256 * 1024;
 constexpr qint64 MaximumIncrementBytes = 2 * 1024 * 1024;
 constexpr int DiscoveryEveryPolls = 8;
+constexpr int MaximumDesktopLogsPerDay = 64;
 constexpr qint64 NewlyDiscoveredLogTailBytes = 64 * 1024;
 constexpr qint64 RecentApprovalWindowMs = 30 * 1000;
+constexpr qsizetype MaximumRecentApprovalKeys = 256;
+
+QStringList desktopLogRoots(const QString& localAppData)
+{
+    QStringList candidates;
+    QDir packages(QDir(localAppData).filePath(QStringLiteral("Packages")));
+
+    // Prefer the Store package's real LocalCache location. On some Windows
+    // installations the shorter %LOCALAPPDATA%/Codex path is only a virtualized
+    // view and is not accessible to an unpackaged WhaleMaid process.
+    candidates.append(QDir(packages.absolutePath()).filePath(
+        QStringLiteral("OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/Codex/Logs")));
+    const QFileInfoList codexPackages = packages.entryInfoList(
+        {QStringLiteral("OpenAI.Codex_*")},
+        QDir::Dirs | QDir::NoDotAndDotDot,
+        QDir::Name);
+    for (const QFileInfo& package : codexPackages)
+    {
+        candidates.append(QDir(package.absoluteFilePath()).filePath(
+            QStringLiteral("LocalCache/Local/Codex/Logs")));
+    }
+    candidates.append(QDir(localAppData).filePath(QStringLiteral("Codex/Logs")));
+
+    QStringList roots;
+    QSet<QString> seen;
+    for (const QString& candidate : candidates)
+    {
+        const QFileInfo information(candidate);
+        if (!information.isDir())
+        {
+            continue;
+        }
+        const QString canonical = information.canonicalFilePath();
+        const QString key = QDir::cleanPath(
+            canonical.isEmpty() ? information.absoluteFilePath() : canonical)
+                                .toLower();
+        if (!seen.contains(key))
+        {
+            seen.insert(key);
+            roots.append(information.absoluteFilePath());
+        }
+    }
+    return roots;
+}
 
 QString sessionIdFromPath(const QString& path)
 {
@@ -35,6 +81,53 @@ QString captureField(const QString& line, const QString& field)
         QStringLiteral("(?:^|\\s)%1=([^\\s]+)").arg(QRegularExpression::escape(field)));
     const auto match = expression.match(line);
     return match.hasMatch() ? match.captured(1) : QString();
+}
+
+bool isPermissionRequest(const QString& toolName, const QString& toolInput)
+{
+    const bool directPermissionRequest =
+        toolName.compare(
+            QStringLiteral("request_permissions"),
+            Qt::CaseInsensitive) == 0;
+    const bool execTool =
+        toolName.compare(QStringLiteral("exec"), Qt::CaseInsensitive) == 0
+        || toolName.compare(
+               QStringLiteral("exec_command"),
+               Qt::CaseInsensitive) == 0;
+
+    static const QRegularExpression wrappedPermissionExpression(
+        QStringLiteral(
+            R"(\bawait\s+tools\s*\.\s*request_permissions\s*\()"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression escalatedPermissionExpression(
+        QStringLiteral(
+            R"(["']?\bsandbox_permissions\b["']?\s*:\s*["']require_escalated["'])"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    return directPermissionRequest
+        || (execTool
+            && (toolInput.contains(wrappedPermissionExpression)
+                || toolInput.contains(escalatedPermissionExpression)));
+}
+
+QString toolArguments(const QJsonObject& payload, const QString& field)
+{
+    const QJsonValue value = payload.value(field);
+    if (value.isString())
+    {
+        return value.toString();
+    }
+    if (value.isObject())
+    {
+        return QString::fromUtf8(
+            QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact));
+    }
+    if (value.isArray())
+    {
+        return QString::fromUtf8(
+            QJsonDocument(value.toArray()).toJson(QJsonDocument::Compact));
+    }
+    return QString();
 }
 }
 
@@ -116,39 +209,47 @@ void CodexActivityWatcher::discoverFiles()
     const QString localAppData = qEnvironmentVariable("LOCALAPPDATA");
     if (!localAppData.isEmpty())
     {
-        const QDate date = QDate::currentDate();
-        QDir directory(QDir(localAppData).filePath(
-            QStringLiteral("Codex/Logs/%1/%2/%3")
-                .arg(date.year(), 4, 10, QLatin1Char('0'))
-                .arg(date.month(), 2, 10, QLatin1Char('0'))
-                .arg(date.day(), 2, 10, QLatin1Char('0'))));
-        const QFileInfoList logs = directory.entryInfoList(
-            {QStringLiteral("*.log")}, QDir::Files, QDir::Time);
-        const int count = std::min<int>(static_cast<int>(logs.size()), 12);
-        for (int index = 0; index < count; ++index)
+        const QStringList roots = desktopLogRoots(localAppData);
+        for (const QString& root : roots)
         {
-            const QString path = logs.at(index).absoluteFilePath();
-            if (!logFiles_.contains(path))
+            for (int dayOffset = 0; dayOffset >= -1; --dayOffset)
             {
-                LogFileState state;
-                const qint64 size = logs.at(index).size();
-                if (initialDiscoveryComplete_)
+                const QDate date = today.addDays(dayOffset);
+                QDir directory(QDir(root).filePath(
+                    QStringLiteral("%1/%2/%3")
+                        .arg(date.year(), 4, 10, QLatin1Char('0'))
+                        .arg(date.month(), 2, 10, QLatin1Char('0'))
+                        .arg(date.day(), 2, 10, QLatin1Char('0'))));
+                const QFileInfoList logs = directory.entryInfoList(
+                    {QStringLiteral("*.log")}, QDir::Files, QDir::Time);
+                const int count = std::min<int>(
+                    static_cast<int>(logs.size()), MaximumDesktopLogsPerDay);
+                for (int index = 0; index < count; ++index)
                 {
-                    state.offset = std::max<qint64>(0, size - NewlyDiscoveredLogTailBytes);
-                    state.discardPartialLine = state.offset > 0;
-                    state.minimumEventUtcMs =
-                        QDateTime::currentDateTimeUtc().toMSecsSinceEpoch()
-                        - RecentApprovalWindowMs;
-                }
-                else
-                {
-                    // Do not resurrect old approval cards at application startup.
-                    state.offset = size;
-                }
-                logFiles_.insert(path, state);
-                if (initialDiscoveryComplete_)
-                {
-                    readDesktopLog(path);
+                    const QString path = logs.at(index).absoluteFilePath();
+                    if (!logFiles_.contains(path))
+                    {
+                        LogFileState state;
+                        const qint64 size = logs.at(index).size();
+                        if (initialDiscoveryComplete_)
+                        {
+                            state.offset = std::max<qint64>(0, size - NewlyDiscoveredLogTailBytes);
+                            state.discardPartialLine = state.offset > 0;
+                            state.minimumEventUtcMs =
+                                QDateTime::currentDateTimeUtc().toMSecsSinceEpoch()
+                                - RecentApprovalWindowMs;
+                        }
+                        else
+                        {
+                            // Do not resurrect old approval cards at application startup.
+                            state.offset = size;
+                        }
+                        logFiles_.insert(path, state);
+                        if (initialDiscoveryComplete_)
+                        {
+                            readDesktopLog(path);
+                        }
+                    }
                 }
             }
         }
@@ -298,22 +399,19 @@ void CodexActivityWatcher::processSessionLine(
     }
     else if (recordType == QStringLiteral("response_item"))
     {
-        if (payloadType == QStringLiteral("custom_tool_call"))
+        const bool customToolCall =
+            payloadType == QStringLiteral("custom_tool_call");
+        const bool functionCall =
+            payloadType == QStringLiteral("function_call");
+        if (customToolCall || functionCall)
         {
             const QString toolName = payload.value(QStringLiteral("name")).toString();
-            const QString toolInput = payload.value(QStringLiteral("input")).toString();
-            const bool directPermissionRequest =
-                toolName.compare(
-                    QStringLiteral("request_permissions"),
-                    Qt::CaseInsensitive) == 0;
-            const bool wrappedPermissionRequest =
-                toolName.compare(QStringLiteral("exec"), Qt::CaseInsensitive) == 0
-                && toolInput.contains(
-                    QRegularExpression(
-                        QStringLiteral(
-                            R"(\bawait\s+tools\s*\.\s*request_permissions\s*\()"),
-                        QRegularExpression::CaseInsensitiveOption));
-            if (directPermissionRequest || wrappedPermissionRequest)
+            const QString toolInput = toolArguments(
+                payload,
+                customToolCall
+                    ? QStringLiteral("input")
+                    : QStringLiteral("arguments"));
+            if (isPermissionRequest(toolName, toolInput))
             {
                 publish(state, QStringLiteral("approval"),
                         QStringLiteral("需要你的确认"), state.turnId, emitEvents);
@@ -325,7 +423,8 @@ void CodexActivityWatcher::processSessionLine(
             }
         }
         else if (payloadType == QStringLiteral("reasoning")
-                 || payloadType == QStringLiteral("custom_tool_call_output"))
+                 || payloadType == QStringLiteral("custom_tool_call_output")
+                 || payloadType == QStringLiteral("function_call_output"))
         {
             publish(state, QStringLiteral("thinking"),
                     QStringLiteral("正在理解你的任务"), state.turnId, emitEvents);
@@ -362,7 +461,10 @@ void CodexActivityWatcher::readDesktopLog(const QString& path)
     LogFileState& state = logFiles_[path];
     if (file.size() < state.offset)
     {
-        state.offset = file.size();
+        state.offset = 0;
+        state.minimumEventUtcMs =
+            QDateTime::currentDateTimeUtc().toMSecsSinceEpoch()
+            - RecentApprovalWindowMs;
     }
     file.seek(state.offset);
     if (state.discardPartialLine)
@@ -381,12 +483,20 @@ void CodexActivityWatcher::readDesktopLog(const QString& path)
         }
         const QString line = QString::fromUtf8(rawLine);
         const bool desktopApprovalStarted =
-            line.contains(QStringLiteral("show approval"), Qt::CaseInsensitive)
-            && line.contains(QStringLiteral("kind=permissionRequest"), Qt::CaseInsensitive);
+            line.contains(QStringLiteral("[desktop-notifications] show approval"),
+                          Qt::CaseInsensitive);
+        const bool desktopPermissionNotification =
+            (line.contains(QStringLiteral("[desktop-notifications] show notification"),
+                           Qt::CaseInsensitive)
+             || line.contains(QStringLiteral("[desktop-notifications] forward show"),
+                              Qt::CaseInsensitive))
+            && line.contains(QStringLiteral("kind=permission"), Qt::CaseInsensitive);
         const bool legacyApprovalStarted =
             line.contains(QStringLiteral("permissions/requestApproval"), Qt::CaseInsensitive)
             && !line.contains(QStringLiteral("Sending server response"), Qt::CaseInsensitive);
-        if (!desktopApprovalStarted && !legacyApprovalStarted)
+        if (!desktopApprovalStarted
+            && !desktopPermissionNotification
+            && !legacyApprovalStarted)
         {
             continue;
         }
@@ -403,13 +513,29 @@ void CodexActivityWatcher::readDesktopLog(const QString& path)
         }
         const QString sessionId = captureField(line, QStringLiteral("conversationId"));
         const QString turnId = captureField(line, QStringLiteral("turnId"));
-        const QString requestId = captureField(line, QStringLiteral("requestId"));
-        const QString key = !requestId.isEmpty()
-            ? sessionId + QStringLiteral(":approval:") + requestId
-            : path + QLatin1Char(':') + QString::number(lineStart);
-        if (key != lastApprovalKey_)
+        QString requestId = captureField(line, QStringLiteral("requestId"));
+        if (requestId.isEmpty())
         {
-            lastApprovalKey_ = key;
+            requestId = captureField(line, QStringLiteral("notificationId"));
+            requestId.remove(QRegularExpression(
+                QStringLiteral("^approval-(?:local-)?"),
+                QRegularExpression::CaseInsensitiveOption));
+        }
+        if (requestId.isEmpty() && legacyApprovalStarted)
+        {
+            requestId = captureField(line, QStringLiteral("id"));
+        }
+        const QString key = !requestId.isEmpty()
+            ? QFileInfo(path).fileName() + QStringLiteral(":approval:") + requestId
+            : path + QLatin1Char(':') + QString::number(lineStart);
+        if (!recentApprovalKeys_.contains(key))
+        {
+            recentApprovalKeys_.insert(key);
+            recentApprovalKeyOrder_.append(key);
+            if (recentApprovalKeyOrder_.size() > MaximumRecentApprovalKeys)
+            {
+                recentApprovalKeys_.remove(recentApprovalKeyOrder_.takeFirst());
+            }
             Q_EMIT eventDetected(
                 QStringLiteral("approval"),
                 QStringLiteral("需要你的确认"),

@@ -613,7 +613,7 @@ void PetWindow::applyWindowScale(const int percent, const bool persist)
 void PetWindow::showAboutDialog()
 {
     QDialog about(this);
-    about.setWindowTitle(QStringLiteral("关于 WhaleMaid 桌宠"));
+    about.setWindowTitle(QStringLiteral("关于 WhaleMaid-for-Codex"));
     about.setModal(true);
     about.setMinimumWidth(380);
 
@@ -623,7 +623,7 @@ void PetWindow::showAboutDialog()
     information->setTextInteractionFlags(Qt::TextBrowserInteraction);
     information->setOpenExternalLinks(true);
     information->setText(QStringLiteral(
-        "<p><b>WhaleMaid 桌宠</b></p>"
+        "<p><b>WhaleMaid-for-Codex v1.3.2</b></p>"
         "<p>作者：EussGaler</p>"
         "<p>bilibili：<a href=\"https://space.bilibili.com/222999797\">"
         "space.bilibili.com/222999797</a></p>"
