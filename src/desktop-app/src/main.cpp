@@ -142,7 +142,7 @@ int main(int argc, char* argv[])
             const auto windows = QApplication::topLevelWidgets();
             for (QWidget* widget : windows)
             {
-                if (widget->windowTitle() == QStringLiteral("关于 WhaleMaid 桌宠"))
+                if (widget->windowTitle() == QStringLiteral("关于 WhaleMaid-for-Codex"))
                 {
                     saved = widget->grab().save(screenshotPath, "PNG");
                     widget->close();

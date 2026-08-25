@@ -127,6 +127,7 @@ public:
             close_->setText(QStringLiteral("×"));
             close_->setToolTip(QStringLiteral("关闭提示"));
             close_->setCursor(Qt::PointingHandCursor);
+            close_->setFocusPolicy(Qt::NoFocus);
         }
     }
 
@@ -283,15 +284,16 @@ void PetWindow::buildUi()
     // Keep status cards in their own native window. Resizing an ancestor of a
     // QOpenGLWidget recreates its backing buffer and causes a one-frame flash.
     // A sibling tool window lets cards change size without touching Live2D.
-    noticeHost_ = new QWidget(
-        nullptr,
-        Qt::Tool
-            | Qt::FramelessWindowHint
-            | Qt::WindowStaysOnTopHint
-            | Qt::WindowDoesNotAcceptFocus);
+    Qt::WindowFlags noticeWindowFlags =
+        Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint;
+#ifndef Q_OS_WIN
+    noticeWindowFlags |= Qt::WindowDoesNotAcceptFocus;
+#endif
+    noticeHost_ = new QWidget(nullptr, noticeWindowFlags);
     noticeHost_->setObjectName(QStringLiteral("noticeHost"));
     noticeHost_->setAttribute(Qt::WA_TranslucentBackground);
     noticeHost_->setAttribute(Qt::WA_ShowWithoutActivating);
+    noticeHost_->setFocusPolicy(Qt::NoFocus);
     noticeLayout_ = new QVBoxLayout(noticeHost_);
     noticeLayout_->setContentsMargins(0, 0, 0, 0);
     noticeLayout_->setSpacing(7);

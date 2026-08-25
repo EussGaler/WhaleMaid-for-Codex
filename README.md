@@ -30,7 +30,13 @@ https://github.com/user-attachments/assets/e47c77d5-10ef-469a-a449-9d0ef0f2bcd4
 | --- | --- | --- |
 | Windows 10/11 x64 | `WhaleMaid-for-Codex-Windows-x64-v1.3.3.zip` | 解压后双击 `安装WhaleMaid.cmd`，支持 Codex Desktop 与 VS Code 中的 Codex |
 | Ubuntu 22.04 x86_64 | `WhaleMaid-for-Codex-Ubuntu-x64-v1.3.3.tar.gz` | 完整解压后运行 `安装WhaleMaid.sh`，支持 X11 与 Wayland 会话中的 XWayland |
-| 二次开发 | `WhaleMaid-for-Codex-Ubuntu-v1.3.3-GitHub-Source` 源码仓库 | 同一套跨平台 C++/Qt 源码可分别构建 Windows 与 Ubuntu 版本 |
+| 二次开发 | `WhaleMaid-for-Codex-v1.3.3-GitHub-Source` 源码仓库 | 同一套跨平台 C++/Qt 源码可分别构建 Windows 与 Ubuntu 版本 |
+
+### 平台说明
+
+Windows 版本支持 **Windows 10/11 x64**，可配合 **ChatGPT Work 或 VS Code 中的 Codex 插件**使用。
+
+Ubuntu 版本支持 **Ubuntu 22.04 x86_64**，支持 **VS Code 中的 Codex 插件**，需要 X11 或 XWayland。纯原生 Wayland 暂不属于本版本的正式支持范围。
 
 Windows 与 Ubuntu Release 都已经包含普通用户运行所需的 Qt、Live2D 运行资源和 WhaleMaid 程序，不需要另行安装 Qt、CMake 或编译器。Windows 包不能直接用于 Ubuntu，Ubuntu 包也不能直接用于 Windows。
 
