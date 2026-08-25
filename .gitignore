@@ -6,4 +6,5 @@
 *.zip
 *.log
 hooks.json.whalemaid-backup-*
-
+/src/desktop-app/Resources/
+/src/desktop-app/assets/

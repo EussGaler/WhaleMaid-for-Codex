@@ -1,6 +1,7 @@
 #include "PetStateController.hpp"
 #include "CodexActivityWatcher.hpp"
 #include "PetPreferences.hpp"
+#include "PlatformPaths.hpp"
 #include "StartupSettings.hpp"
 #include "WindowPlacement.hpp"
 
@@ -33,6 +34,7 @@ private Q_SLOTS:
     void permissionToolCallsAreRecognized();
     void functionToolCallsAreRecognized();
     void guardianCompletionsAreIgnored();
+    void longRunningSessionIsDiscovered();
     void startupSettingCanBeToggled();
     void petPreferencesRoundTrip();
 };
@@ -593,6 +595,48 @@ void PetStateControllerTests::guardianCompletionsAreIgnored()
     QCOMPARE(events.at(0).at(0).toString(), QStringLiteral("completed"));
 }
 
+void PetStateControllerTests::longRunningSessionIsDiscovered()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QByteArray oldCodexHome = qgetenv("CODEX_HOME");
+    const QString codexHome = QDir(temporary.path()).filePath(QStringLiteral("codex-home"));
+    qputenv("CODEX_HOME", codexHome.toUtf8());
+    const auto cleanup = qScopeGuard([=]() {
+        if (oldCodexHome.isNull()) qunsetenv("CODEX_HOME");
+        else qputenv("CODEX_HOME", oldCodexHome);
+    });
+
+    const QDate sessionDate = QDate::currentDate().addDays(-3);
+    const QString sessionDirectory = QDir(codexHome).filePath(
+        QStringLiteral("sessions/%1/%2/%3")
+            .arg(sessionDate.year(), 4, 10, QLatin1Char('0'))
+            .arg(sessionDate.month(), 2, 10, QLatin1Char('0'))
+            .arg(sessionDate.day(), 2, 10, QLatin1Char('0')));
+    QVERIFY(QDir().mkpath(sessionDirectory));
+
+    QFile session(QDir(sessionDirectory).filePath(
+        QStringLiteral("rollout-long-running-01long-session.jsonl")));
+    QVERIFY(session.open(QIODevice::WriteOnly | QIODevice::Append));
+    const QByteArray metadata =
+        "{\"type\":\"session_meta\",\"payload\":{\"type\":\"session_meta\"}}\n";
+    const QByteArray taskStarted =
+        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\","
+        "\"turn_id\":\"long-turn\"}}\n";
+    QCOMPARE(session.write(metadata), metadata.size());
+    QCOMPARE(session.write(taskStarted), taskStarted.size());
+    QVERIFY(session.flush());
+
+    CodexActivityWatcher watcher;
+    QSignalSpy events(&watcher, &CodexActivityWatcher::eventDetected);
+    watcher.start();
+
+    QCOMPARE(events.count(), 1);
+    QCOMPARE(events.at(0).at(0).toString(), QStringLiteral("thinking"));
+    QCOMPARE(events.at(0).at(2).toString(), QStringLiteral("01long-session"));
+    QCOMPARE(events.at(0).at(3).toString(), QStringLiteral("long-turn"));
+}
+
 void PetStateControllerTests::startupSettingCanBeToggled()
 {
 #ifdef Q_OS_WIN
@@ -638,6 +682,33 @@ void PetStateControllerTests::startupSettingCanBeToggled()
     QVERIFY(!StartupSettings::isEnabled());
     QSettings disabledRunSettings(runPath, QSettings::IniFormat);
     QVERIFY(!disabledRunSettings.contains(QStringLiteral("WhaleMaid")));
+#else
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QByteArray oldAutostartPath = qgetenv("WHALEMAID_TEST_AUTOSTART_PATH");
+    const QString autostartPath = QDir(temporary.path()).filePath(
+        QStringLiteral("autostart/whalemaid.desktop"));
+    qputenv("WHALEMAID_TEST_AUTOSTART_PATH", autostartPath.toUtf8());
+
+    const auto cleanup = qScopeGuard([=]() {
+        if (oldAutostartPath.isNull()) qunsetenv("WHALEMAID_TEST_AUTOSTART_PATH");
+        else qputenv("WHALEMAID_TEST_AUTOSTART_PATH", oldAutostartPath);
+    });
+
+    QString error;
+    QVERIFY2(StartupSettings::setEnabled(true, &error), qPrintable(error));
+    QVERIFY(StartupSettings::isEnabled());
+    QFile desktopFile(autostartPath);
+    QVERIFY(desktopFile.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray contents = desktopFile.readAll();
+    QVERIFY(contents.startsWith("[Desktop Entry]\n"));
+    QVERIFY(contents.contains("Type=Application\n"));
+    QVERIFY(contents.contains(" --manual-start\n"));
+    QVERIFY(contents.contains("Terminal=false\n"));
+
+    QVERIFY2(StartupSettings::setEnabled(false, &error), qPrintable(error));
+    QVERIFY(!StartupSettings::isEnabled());
+    QVERIFY(!QFileInfo::exists(autostartPath));
 #endif
 }
 

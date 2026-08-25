@@ -4,6 +4,7 @@
 #include "CodexActivityWatcher.hpp"
 #include "CodexStatusBridge.hpp"
 #include "PetPreferences.hpp"
+#include "PlatformPaths.hpp"
 #include "StartupSettings.hpp"
 #include "WindowPlacement.hpp"
 
@@ -36,6 +37,7 @@
 #include <QToolButton>
 #include <QTimer>
 #include <QWidgetAction>
+#include <QWindow>
 
 #include <algorithm>
 #include <cmath>
@@ -343,14 +345,12 @@ void PetWindow::updateScaledUiMetrics()
 
 void PetWindow::positionNoticeHost()
 {
-    if (!noticeHost_)
+    if (!noticeHost_ || !noticeHost_->isVisible())
     {
         return;
     }
     noticeLayout_->activate();
-    const int desiredHeight = noticeHost_->isVisible()
-        ? noticeLayout_->sizeHint().height()
-        : 0;
+    const int desiredHeight = noticeLayout_->sizeHint().height();
     noticeHost_->setFixedHeight(desiredHeight);
 
     if (desiredHeight <= 0)
@@ -397,8 +397,14 @@ void PetWindow::positionNoticeHost()
             area.top(),
             std::max(area.top(), area.bottom() - desiredHeight + 1)));
     }
-    noticeHost_->move(requested);
-    noticeHost_->raise();
+    if (noticeHost_->pos() != requested)
+    {
+        noticeHost_->move(requested);
+    }
+    if (!windowDragActive_)
+    {
+        noticeHost_->raise();
+    }
 }
 
 void PetWindow::connectInteractions()
@@ -456,7 +462,9 @@ void PetWindow::connectInteractions()
     connect(character_, &CharacterWidget::contextMenuRequested,
             this, &PetWindow::showContextMenu);
 
-    if (!QCoreApplication::arguments().contains(QStringLiteral("--composite-smoke")))
+    const QStringList arguments = QCoreApplication::arguments();
+    if (!arguments.contains(QStringLiteral("--composite-smoke"))
+        && !arguments.contains(QStringLiteral("--live2d-only")))
     {
         auto* bridge = new CodexStatusBridge(this);
         connect(bridge, &CodexStatusBridge::eventReceived,
@@ -519,12 +527,36 @@ void PetWindow::showContextMenu(const QPoint& globalPosition)
     auto* scaleAction = new QWidgetAction(scaleMenu);
     scaleAction->setDefaultWidget(scaleWidget);
     scaleMenu->addAction(scaleAction);
-    connect(scaleSlider, &QSlider::valueChanged, this,
-            [this, scaleValue](const int value) {
+    connect(scaleSlider, &QSlider::valueChanged, scaleValue,
+            [scaleValue](const int value) {
                 scaleValue->setText(QStringLiteral("%1%").arg(value));
-                applyWindowScale(value, false);
             });
-    connect(scaleMenu, &QMenu::aboutToHide, this, [this]() {
+    auto* scaleFrameTimer = new QTimer(scaleMenu);
+    scaleFrameTimer->setSingleShot(true);
+    scaleFrameTimer->setTimerType(Qt::PreciseTimer);
+    scaleFrameTimer->setInterval(16);
+    connect(scaleSlider, &QSlider::valueChanged, scaleFrameTimer,
+            [this, scaleFrameTimer]() {
+                beginWindowScale();
+                if (!scaleFrameTimer->isActive())
+                {
+                    scaleFrameTimer->start();
+                }
+            });
+    connect(scaleFrameTimer, &QTimer::timeout, this, [this, scaleSlider]() {
+        applyWindowScale(scaleSlider->value(), false);
+    });
+    connect(scaleSlider, &QSlider::sliderReleased, this,
+            [this, scaleSlider, scaleFrameTimer]() {
+                scaleFrameTimer->stop();
+                applyWindowScale(scaleSlider->value(), false);
+                endWindowScale();
+            });
+    connect(scaleMenu, &QMenu::aboutToHide, this,
+            [this, scaleSlider, scaleFrameTimer]() {
+        scaleFrameTimer->stop();
+        applyWindowScale(scaleSlider->value(), false);
+        endWindowScale();
         savePreferences();
     });
 
@@ -595,7 +627,9 @@ void PetWindow::applyWindowScale(const int percent, const bool persist)
         return;
     }
 
-    const QPoint bottomRightAnchor = frameGeometry().bottomRight();
+    const QPoint bottomRightAnchor = windowScaleActive_
+        ? windowScaleBottomRightAnchor_
+        : frameGeometry().bottomRight();
     windowScalePercent_ = boundedPercent;
     setFixedSize(scaledWindowSize(windowScalePercent_));
     updateScaledUiMetrics();
@@ -608,6 +642,21 @@ void PetWindow::applyWindowScale(const int percent, const bool persist)
     {
         savePreferences();
     }
+}
+
+void PetWindow::beginWindowScale()
+{
+    if (windowScaleActive_)
+    {
+        return;
+    }
+    windowScaleBottomRightAnchor_ = frameGeometry().bottomRight();
+    windowScaleActive_ = true;
+}
+
+void PetWindow::endWindowScale()
+{
+    windowScaleActive_ = false;
 }
 
 void PetWindow::showAboutDialog()
@@ -623,7 +672,7 @@ void PetWindow::showAboutDialog()
     information->setTextInteractionFlags(Qt::TextBrowserInteraction);
     information->setOpenExternalLinks(true);
     information->setText(QStringLiteral(
-        "<p><b>WhaleMaid-for-Codex v1.3.2</b></p>"
+        "<p><b>WhaleMaid-for-Codex v1.3.3</b></p>"
         "<p>作者：EussGaler</p>"
         "<p>bilibili：<a href=\"https://space.bilibili.com/222999797\">"
         "space.bilibili.com/222999797</a></p>"
@@ -700,11 +749,22 @@ void PetWindow::beginWindowDrag(const QPoint& globalPosition)
     // a guessed anchor when the dragged pose becomes active.
     dragOffset_ = globalPosition - frameGeometry().topLeft();
     windowDragActive_ = true;
+    systemWindowMoveActive_ = false;
+#ifdef Q_OS_LINUX
+    if (QWindow* nativeWindow = windowHandle())
+    {
+        systemWindowMoveActive_ = nativeWindow->startSystemMove();
+    }
+    if (qEnvironmentVariableIsSet("WHALEMAID_TRACE_INTERACTIONS"))
+    {
+        qInfo() << "X11 system window move accepted:" << systemWindowMoveActive_;
+    }
+#endif
 }
 
 void PetWindow::continueWindowDrag(const QPoint& globalPosition)
 {
-    if (!windowDragActive_)
+    if (!windowDragActive_ || systemWindowMoveActive_)
     {
         return;
     }
@@ -720,6 +780,7 @@ void PetWindow::endWindowDrag()
     }
 
     windowDragActive_ = false;
+    systemWindowMoveActive_ = false;
     savePreferences();
 }
 
@@ -852,12 +913,12 @@ void PetWindow::closeEvent(QCloseEvent* event)
 {
     savePreferences();
     noticeHost_->hide();
-    const QString localAppData = qEnvironmentVariable("LOCALAPPDATA");
-    if (!localAppData.isEmpty())
+    const QString flagPath = PlatformPaths::manualExitFlagPath();
+    if (!flagPath.isEmpty())
     {
-        const QString directory = QDir(localAppData).filePath(QStringLiteral("WhaleMaid"));
+        const QString directory = QFileInfo(flagPath).absolutePath();
         QDir().mkpath(directory);
-        QFile flag(QDir(directory).filePath(QStringLiteral("manual-exit.flag")));
+        QFile flag(flagPath);
         if (flag.open(QIODevice::WriteOnly | QIODevice::Truncate))
         {
             flag.write("User closed WhaleMaid.\n");

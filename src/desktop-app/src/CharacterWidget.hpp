@@ -46,6 +46,7 @@ private:
     QPixmap pixmap_;
     std::unique_ptr<Live2DScene> live2D_;
     QTimer animationTimer_;
+    QTimer dragReleaseTimer_;
     bool primaryDown_ = false;
     bool dragLocked_ = false;
 };

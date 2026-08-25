@@ -1,9 +1,11 @@
 #include "PetWindow.hpp"
 #include "CodexStatusBridge.hpp"
+#include "PlatformPaths.hpp"
 
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QLockFile>
 #include <QSurfaceFormat>
 #include <QTimer>
 
@@ -11,6 +13,12 @@
 
 int main(int argc, char* argv[])
 {
+#ifdef Q_OS_LINUX
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
+    {
+        qputenv("QT_QPA_PLATFORM", "xcb");
+    }
+#endif
     QSurfaceFormat format;
     format.setRenderableType(QSurfaceFormat::OpenGL);
     format.setVersion(2, 1);
@@ -29,11 +37,10 @@ int main(int argc, char* argv[])
     const QStringList arguments = app.arguments();
     if (!arguments.contains(QStringLiteral("--hook-autostart")))
     {
-        const QString localAppData = qEnvironmentVariable("LOCALAPPDATA");
-        if (!localAppData.isEmpty())
+        const QString manualExitFlag = PlatformPaths::manualExitFlagPath();
+        if (!manualExitFlag.isEmpty())
         {
-            QFile::remove(QDir(localAppData).filePath(
-                QStringLiteral("WhaleMaid/manual-exit.flag")));
+            QFile::remove(manualExitFlag);
         }
     }
     const qsizetype statusIndex = arguments.indexOf(QStringLiteral("--codex-status"));
@@ -57,12 +64,30 @@ int main(int argc, char* argv[])
 
     // A normal second launch asks the existing instance to restore itself and exits.
     // Composite UI checks stay isolated from the user's running desktop pet.
-    const bool isolatedUiSmoke = arguments.contains(QStringLiteral("--composite-smoke"));
+    const bool live2DOnly = arguments.contains(QStringLiteral("--live2d-only"));
+    const bool isolatedUiSmoke = live2DOnly
+        || arguments.contains(QStringLiteral("--composite-smoke"));
     if (!isolatedUiSmoke && CodexStatusBridge::sendEvent(
             QStringLiteral("activate"), {}, {}, {}, QStringLiteral("activate")))
     {
         return 0;
     }
+
+#ifndef Q_OS_WIN
+    std::unique_ptr<QLockFile> instanceLock;
+    if (!isolatedUiSmoke)
+    {
+        instanceLock = std::make_unique<QLockFile>(PlatformPaths::instanceLockPath());
+        instanceLock->setStaleLockTime(0);
+        if (!instanceLock->tryLock(250))
+        {
+            return CodexStatusBridge::sendEvent(
+                       QStringLiteral("activate"), {}, {}, {}, QStringLiteral("activate"))
+                ? 0
+                : 4;
+        }
+    }
+#endif
 
     PetWindow window;
     const qsizetype windowScaleIndex = arguments.indexOf(QStringLiteral("--window-scale"));
@@ -180,10 +205,16 @@ int main(int argc, char* argv[])
 
     const qsizetype compositeSmokeIndex = arguments.indexOf(
         QStringLiteral("--composite-smoke"));
-    if (compositeSmokeIndex >= 0 && compositeSmokeIndex + 1 < arguments.size())
+    const qsizetype codexCompositeSmokeIndex = arguments.indexOf(
+        QStringLiteral("--codex-composite-smoke"));
+    const qsizetype selectedCompositeSmokeIndex = compositeSmokeIndex >= 0
+        ? compositeSmokeIndex
+        : codexCompositeSmokeIndex;
+    if (selectedCompositeSmokeIndex >= 0
+        && selectedCompositeSmokeIndex + 1 < arguments.size())
     {
         const QString screenshotPath = QDir::cleanPath(
-            arguments.at(compositeSmokeIndex + 1));
+            arguments.at(selectedCompositeSmokeIndex + 1));
         QTimer::singleShot(1000, &app, [&app, &window, screenshotPath]() {
             app.exit(window.saveCompositeForTesting(screenshotPath) ? 0 : 2);
         });

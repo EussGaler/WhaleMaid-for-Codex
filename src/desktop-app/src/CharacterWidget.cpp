@@ -11,6 +11,7 @@
 #include <QCoreApplication>
 #include <QCursor>
 #include <QEnterEvent>
+#include <QGuiApplication>
 #include <QMouseEvent>
 #include <QPainter>
 
@@ -38,6 +39,18 @@ CharacterWidget::CharacterWidget(QWidget* parent)
     animationTimer_.setInterval(16);
     connect(&animationTimer_, &QTimer::timeout, this, [this]() { update(); });
     animationTimer_.start();
+
+    dragReleaseTimer_.setTimerType(Qt::PreciseTimer);
+    dragReleaseTimer_.setInterval(16);
+    connect(&dragReleaseTimer_, &QTimer::timeout, this, [this]() {
+        if (primaryDown_ && !(QGuiApplication::mouseButtons() & Qt::LeftButton))
+        {
+            primaryDown_ = false;
+            dragReleaseTimer_.stop();
+            setCursor(dragLocked_ ? Qt::ArrowCursor : Qt::OpenHandCursor);
+            Q_EMIT primaryReleased();
+        }
+    });
 }
 
 CharacterWidget::~CharacterWidget()
@@ -62,6 +75,7 @@ void CharacterWidget::setDragLocked(const bool locked)
 {
     dragLocked_ = locked;
     primaryDown_ = false;
+    dragReleaseTimer_.stop();
     setCursor(dragLocked_ ? Qt::ArrowCursor : Qt::OpenHandCursor);
 }
 
@@ -187,6 +201,7 @@ void CharacterWidget::mousePressEvent(QMouseEvent* event)
             return;
         }
         primaryDown_ = true;
+        dragReleaseTimer_.start();
         setCursor(Qt::ClosedHandCursor);
         Q_EMIT primaryPressed(event->globalPosition().toPoint());
         event->accept();
@@ -208,6 +223,7 @@ void CharacterWidget::mouseReleaseEvent(QMouseEvent* event)
     if (event->button() == Qt::LeftButton && primaryDown_)
     {
         primaryDown_ = false;
+        dragReleaseTimer_.stop();
         setCursor(dragLocked_ ? Qt::ArrowCursor : Qt::OpenHandCursor);
         Q_EMIT primaryReleased();
         event->accept();

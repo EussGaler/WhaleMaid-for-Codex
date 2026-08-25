@@ -4,10 +4,12 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QSettings>
 
 namespace
 {
+#ifdef Q_OS_WIN
 QString preferenceRegistryPath()
 {
     const QString testPath = qEnvironmentVariable("WHALEMAID_TEST_SETTINGS_REGISTRY");
@@ -55,6 +57,48 @@ QString startupCommand()
     return QStringLiteral("\"%1\" --manual-start").arg(
         QDir::toNativeSeparators(QCoreApplication::applicationFilePath()));
 }
+#else
+QString autostartFilePath()
+{
+    const QString testPath = qEnvironmentVariable("WHALEMAID_TEST_AUTOSTART_PATH");
+    if (!testPath.isEmpty())
+    {
+        return QDir::cleanPath(testPath);
+    }
+
+    QString configRoot = qEnvironmentVariable("XDG_CONFIG_HOME");
+    if (configRoot.isEmpty())
+    {
+        configRoot = QDir(QDir::homePath()).filePath(QStringLiteral(".config"));
+    }
+    return QDir(configRoot).filePath(QStringLiteral("autostart/whalemaid.desktop"));
+}
+
+QString desktopEntryQuoted(QString value)
+{
+    value.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    value.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    value.replace(QLatin1Char('`'), QStringLiteral("\\`"));
+    value.replace(QLatin1Char('$'), QStringLiteral("\\$"));
+    return QStringLiteral("\"%1\"").arg(value);
+}
+
+QByteArray autostartDesktopEntry()
+{
+    const QString executable = desktopEntryQuoted(QCoreApplication::applicationFilePath());
+    return QStringLiteral(
+               "[Desktop Entry]\n"
+               "Type=Application\n"
+               "Version=1.0\n"
+               "Name=WhaleMaid\n"
+               "Comment=WhaleMaid desktop pet\n"
+               "Exec=%1 --manual-start\n"
+               "Terminal=false\n"
+               "X-GNOME-Autostart-enabled=true\n")
+        .arg(executable)
+        .toUtf8();
+}
+#endif
 }
 
 bool StartupSettings::isEnabled()
@@ -70,7 +114,7 @@ bool StartupSettings::isEnabled()
     return runSettings.contains(QStringLiteral("WhaleMaid"))
         || QFileInfo::exists(legacyShortcutPath());
 #else
-    return false;
+    return QFileInfo::exists(autostartFilePath());
 #endif
 }
 
@@ -113,11 +157,41 @@ bool StartupSettings::setEnabled(const bool enabled, QString* errorMessage)
     }
     return true;
 #else
-    Q_UNUSED(enabled);
-    if (errorMessage)
+    const QString path = autostartFilePath();
+    if (!enabled)
     {
-        *errorMessage = QStringLiteral("开机启动设置目前仅支持 Windows。");
+        if (!QFileInfo::exists(path) || QFile::remove(path))
+        {
+            return true;
+        }
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("无法移除当前用户的开机启动文件：%1").arg(path);
+        }
+        return false;
     }
-    return false;
+
+    const QString directory = QFileInfo(path).absolutePath();
+    if (!QDir().mkpath(directory))
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("无法创建当前用户的开机启动目录：%1").arg(directory);
+        }
+        return false;
+    }
+
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)
+        || file.write(autostartDesktopEntry()) < 0
+        || !file.commit())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("无法保存当前用户的开机启动文件：%1").arg(path);
+        }
+        return false;
+    }
+    return true;
 #endif
 }

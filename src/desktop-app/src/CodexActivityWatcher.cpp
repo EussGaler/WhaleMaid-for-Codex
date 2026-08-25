@@ -18,6 +18,8 @@ namespace
 constexpr qint64 InitialTailBytes = 256 * 1024;
 constexpr qint64 MaximumIncrementBytes = 2 * 1024 * 1024;
 constexpr int DiscoveryEveryPolls = 8;
+constexpr int SessionDiscoveryDays = 30;
+constexpr int MaximumSessionFiles = 24;
 constexpr int MaximumDesktopLogsPerDay = 64;
 constexpr qint64 NewlyDiscoveredLogTailBytes = 64 * 1024;
 constexpr qint64 RecentApprovalWindowMs = 30 * 1000;
@@ -179,7 +181,8 @@ void CodexActivityWatcher::poll()
 void CodexActivityWatcher::discoverFiles()
 {
     const QDate today = QDate::currentDate();
-    for (int dayOffset = 0; dayOffset >= -1; --dayOffset)
+    QFileInfoList sessionCandidates;
+    for (int dayOffset = 0; dayOffset > -SessionDiscoveryDays; --dayOffset)
     {
         const QDate date = today.addDays(dayOffset);
         const QString directoryPath = QDir(codexHome()).filePath(
@@ -195,14 +198,26 @@ void CodexActivityWatcher::discoverFiles()
         const int count = std::min<int>(static_cast<int>(files.size()), 12);
         for (int index = 0; index < count; ++index)
         {
-            const QString path = files.at(index).absoluteFilePath();
-            if (!sessionFiles_.contains(path))
-            {
-                SessionFileState state;
-                state.sessionId = sessionIdFromPath(path);
-                sessionFiles_.insert(path, state);
-                readSessionFile(path, true);
-            }
+            sessionCandidates.append(files.at(index));
+        }
+    }
+    std::sort(
+        sessionCandidates.begin(),
+        sessionCandidates.end(),
+        [](const QFileInfo& left, const QFileInfo& right) {
+            return left.lastModified() > right.lastModified();
+        });
+    const int sessionCount = std::min<int>(
+        static_cast<int>(sessionCandidates.size()), MaximumSessionFiles);
+    for (int index = 0; index < sessionCount; ++index)
+    {
+        const QString path = sessionCandidates.at(index).absoluteFilePath();
+        if (!sessionFiles_.contains(path))
+        {
+            SessionFileState state;
+            state.sessionId = sessionIdFromPath(path);
+            sessionFiles_.insert(path, state);
+            readSessionFile(path, true);
         }
     }
 

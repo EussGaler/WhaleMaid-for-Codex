@@ -46,6 +46,8 @@ private:
     void savePreferences() const;
     void showContextMenu(const QPoint& globalPosition);
     void applyWindowScale(int percent, bool persist);
+    void beginWindowScale();
+    void endWindowScale();
     void updateScaledUiMetrics();
     void positionNoticeHost();
     void showAboutDialog();
@@ -76,6 +78,9 @@ private:
 
     QPoint dragOffset_;
     bool windowDragActive_ = false;
+    bool systemWindowMoveActive_ = false;
+    QPoint windowScaleBottomRightAnchor_;
+    bool windowScaleActive_ = false;
     bool petLocked_ = false;
     QString noticePlacement_ = QStringLiteral("above");
     int windowScalePercent_ = 75;

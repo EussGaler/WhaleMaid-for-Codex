@@ -1,6 +1,6 @@
 # WhaleMaid-for-Codex
 
-WhaleMaid-for-Codex 是面向 Windows Codex 桌面端和 VS Code 插件的 Live2D 桌宠。角色会自动呼吸、眨眼并跟随鼠标视线，同时显示 Codex 当前的思考、工作、批准和任务结果状态。
+WhaleMaid-for-Codex 是面向 Windows 和 Ubuntu Codex 环境的 Live2D 桌宠。角色会自动呼吸、眨眼并跟随鼠标视线，同时显示 Codex 当前的思考、工作、批准和任务结果状态。
 
 本项目公开源码并允许非商业学习、修改和二次开发，但不允许未经授权的商业使用。它不是采用 OSI 认可许可证的开源软件。女仆鲸鱼人设来自 bilibili: [@ZipZipPipe](https://space.bilibili.com/4168597)。感谢 [@XYDSYZ](https://github.com/XYDSYZ) 的测试与修改意见。
 
@@ -24,7 +24,28 @@ WhaleMaid-for-Codex 是面向 Windows Codex 桌面端和 VS Code 插件的 Live2
 
 https://github.com/user-attachments/assets/e47c77d5-10ef-469a-a449-9d0ef0f2bcd4
 
+## 下载哪个版本
+
+| 使用环境 | 下载文件 | 说明 |
+| --- | --- | --- |
+| Windows 10/11 x64 | `WhaleMaid-for-Codex-Windows-x64-v1.3.3.zip` | 解压后双击 `安装WhaleMaid.cmd`，支持 Codex Desktop 与 VS Code 中的 Codex |
+| Ubuntu 22.04 x86_64 | `WhaleMaid-for-Codex-Ubuntu-x64-v1.3.3.tar.gz` | 完整解压后运行 `安装WhaleMaid.sh`，支持 X11 与 Wayland 会话中的 XWayland |
+| 二次开发 | `WhaleMaid-for-Codex-Ubuntu-v1.3.3-GitHub-Source` 源码仓库 | 同一套跨平台 C++/Qt 源码可分别构建 Windows 与 Ubuntu 版本 |
+
+Windows 与 Ubuntu Release 都已经包含普通用户运行所需的 Qt、Live2D 运行资源和 WhaleMaid 程序，不需要另行安装 Qt、CMake 或编译器。Windows 包不能直接用于 Ubuntu，Ubuntu 包也不能直接用于 Windows。
+
 ## 系统要求
+
+### Ubuntu Release
+
+- Ubuntu 22.04 Desktop x86_64；
+- X11，或 Wayland 会话中的 XWayland；
+- 可用的 OpenGL 显卡驱动；
+- Codex 会话保存在 `~/.codex/sessions`。
+
+Ubuntu Release 已包含 Qt、Live2D Cubism Core 和运行资源。普通用户不需要安装 Qt、Cubism SDK、CMake 或编译器。纯原生 Wayland 不属于 v1.3.3 的支持目标。
+
+### Windows Release
 
 - Windows 10 或 Windows 11，x64；
 - 已安装并能正常使用 Codex 桌面应用或 VS Code 插件；
@@ -33,7 +54,17 @@ https://github.com/user-attachments/assets/e47c77d5-10ef-469a-a449-9d0ef0f2bcd4
 
 Windows Release 已包含 Qt、Microsoft Visual C++ Runtime、Live2D 运行资源和 WhaleMaid 程序。普通用户无需另行安装开发环境。
 
-## 安装
+## Ubuntu 安装
+
+1. 从 GitHub Releases 下载 `WhaleMaid-for-Codex-Ubuntu-x64-v1.3.3.tar.gz`；
+2. 完整解压并运行 `安装WhaleMaid.sh`；
+3. 使用 `启动WhaleMaid.sh` 手动启动，使用 `卸载WhaleMaid.sh` 安全卸载。
+
+默认安装位置为 `~/.local/share/WhaleMaid`。首次安装默认启用开机启动，之后可以在“关于”窗口中关闭；更新时保留已有选择。Linux 不使用早期 Windows Hook，而是直接监听最近 30 个日历日内的 `~/.codex/sessions` 会话文件。
+
+Ubuntu 版与 Windows 版共用 Live2D 渲染、鼠标视线跟随、状态卡、窗口偏好和 Codex 会话监听逻辑。平台差异主要集中在安装脚本、开机启动方式、单实例通信和状态文件位置。Ubuntu 支持目标是 Ubuntu 22.04 x86_64；其他发行版或纯原生 Wayland 环境尚未作为正式支持范围。
+
+## Windows 安装
 
 1. 从 GitHub Releases 下载 `WhaleMaid-for-Codex-Windows-x64-vX.Y.Z.zip`。
 2. 将 ZIP 完整解压到普通文件夹。不要在压缩包预览窗口中直接运行。
@@ -113,7 +144,7 @@ Codex Hooks、开机启动和日常运行均指向正式安装目录。因此移
 
 普通用户不需要执行本节。
 
-构建环境：
+Windows 构建环境：
 
 - Visual Studio 2022，包含“使用 C++ 的桌面开发”；
 - CMake 3.24 或更高版本；
@@ -131,6 +162,25 @@ cmake --build .\build
 ctest --test-dir .\build --output-on-failure
 ```
 
+Ubuntu 22.04 开发构建环境：Qt 6.11.2 GCC x86_64、CMake、Ninja、OpenGL 开发包，以及 Cubism SDK for Native。示例：
+
+```bash
+cmake -S src/desktop-app -B src/desktop-app/build -G Ninja \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_PREFIX_PATH="$HOME/Qt/6.11.2/gcc_64" \
+  -DWHALE_LIVE2D_SDK_ROOT=/path/to/CubismSdkForNative-5-r.5
+cmake --build src/desktop-app/build --parallel
+ctest --test-dir src/desktop-app/build --output-on-failure
+```
+
+生成 Ubuntu Release：
+
+```bash
+./packaging/linux/build-release.sh \
+  "$HOME/Qt/6.11.2/gcc_64" \
+  "$PWD/src/desktop-app/build"
+```
+
 源码仓库不包含 Qt、Live2D Cubism SDK/Core 或未确认可再分发的角色资源。Windows Release 则面向普通用户提供已经部署的运行包。
 
 ## 项目结构
@@ -140,6 +190,7 @@ ctest --test-dir .\build --output-on-failure
 ```text
 src\desktop-app\          C++、Qt 与 Live2D 集成源码
 packaging\windows\        Windows 安装、启动和卸载脚本
+packaging/linux/           Ubuntu 安装、启动、卸载与发布构建脚本
 README.md                  项目说明
 LICENSE                    许可证
 ```
